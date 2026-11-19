@@ -4,6 +4,63 @@
 
 ---
 
+## [v5.5.0] - 2026-11-19
+
+> **适用版本**：Antigravity `2.33.0+`（macOS `CL=1023160026` / Windows `CL=1028566590`，向下完全兼容 `2.32.x` / `2.31.x` / `2.30.0`）  
+> **核验基线**：macOS `2.33.0` × Windows 11 `2.33.0`（`2.4x HiDPI DirectWrite` `W550-Check 1 ~ 5` 真机 CDP 全绿联合定版）  
+> **核心定位**：`2.33.0` `cdpPipe` 迁移后的**单图标纯净模式 + `M1 + M2` 零侵入双保险 CDP Opt-in 启动架构** + **UI 西文原生切换 `Google Sans Flex` 可变字体引擎 × 中文更纱黑体精密字重桥接（含防脱靶保底）** + **macOS 浅色全域活字润墨与 UI 视觉字重微平衡** + **Windows `DirectWrite` 正文字重轴与多进程零开销短路加固** + **`1,860` 条零冲突词典**
+
+### Changed & Added（`2.33.0+` 单图标 `M1 + M2` 启动接力、UI `Google Sans Flex` 迁移与防脱靶保底、macOS 全域润墨平衡与 `1,860` 条词典）
+- **落地单图标纯净模式 + `M1 + M2` 双保险零侵入 CDP Opt-in 启动接力机制，根治 `2.33.0` 默认移除 `DevToolsActivePort` 导致的注入断联（`install.mjs` / `core/daemon.mjs` / `user/config.json`）**：
+  - **根因背景**：Antigravity `2.33.0` 将内置浏览器操控通道切换至匿名管道 `cdpPipe.js`，主进程移除无条件 `appendSwitch('remote-debugging-port', '0')` 并在未传参启动时调用 `removeStaleActivePortFile()` 清理 `DevToolsActivePort`（显式传入 `--remote-debugging-port=0` 时则原生保留 `0o600` 端口文件）；同时 Windows `electron-updater` `quitAndInstall()` 更新重启会以 `--updated --force-run` 吞掉快捷方式参数；
+  - **M1（单图标原地打标与一键平滑接力 `relaunch`）**：Windows 端自动幂等扫描并原地修补桌面、公共桌面、开始菜单与任务栏 5 处 `Antigravity.lnk` 快捷方式参数（支持 UTF-8 中文用户名/桌面目录与 `CloseMainWindow() + WaitForExit(1800)` 优雅刷盘退出），Linux 端写入 `~/.local/share/applications/antigravity.desktop`；macOS 端默认采用**单图标纯净模式**（不生成第二个应用图标，仅在显式传 `--with-launcher` 时才按需生成带 `LSUIElement` 的启动器，默认安装时自动注销并回收历史 `(Theme).app`）；新增 `node install.mjs relaunch [--channel ...] [--force]` 子命令（默认内置 15s `.db-wal` 活跃对话防误杀门禁、SingletonLock 释放等待与重注验收）；
+  - **M2（后台守护进程早期冷启动无感自动接力 `cdpAutoRelaunch` + Windows 双层零开销短路 + `sidecar_sdk` 伴生进程过滤）**：当 `daemon.mjs` 处于 0 活跃 CDP 目标时（Windows 端内置 `exemptedHostPidByChannel` 内存级 `0.02ms` 短路 + `knownNonHostPids` 同名渲染子进程缓存，实现空闲态 **0 次 `tasklist`、0 次 PowerShell**，并在全平台精准过滤 `--import=|sidecar_sdk|--ms-enable-electron-run-as-node` 插件伴生进程防误判），若探测到无 `--remote-debugging-port` 启动的客户端处于严苛冷启动窗口内（常规启动 `<= 12s`、更新重启 `--updated <= 25s`）、近 15s 无活跃会话 `.db-wal` 写入且未触发 60s 冷却防死锁，自动优雅终止并补挂 `--remote-debugging-port=0` 接力拉起；对运行已超窗口期的存量会话严格豁免（每 PID 仅输出单行提醒，绝不刷屏、绝不误杀）。
+- **UI 西文排版全面切换至官方原生 `Google Sans Flex` 可变字体引擎，内置防脱靶加固并保留更纱黑体与对话正文 `Anthropic Serif`（`core/theme.css` / `core/runtime.js` / `install.mjs`）**：
+  - 移除 `Anthropic Sans` `@font-face` 与 UI 负字距覆盖，完整放行官方 `Google Sans Flex` 的可变字重阶梯（`350 / 450 / 550 / 650`）、`wdth: 92`、`ROND: 0/20` 与 `slnt: -10` 光学斜体轴（同时保留用户切换官方 `Inter` 偏好的分支）；
+  - **防脱靶保底设施（`#ag-google-sans-flex-fonts`）**：无论宿主因历史 `System UI` 旧存档、VS Code `settings.json` 自定义 `font.family`、`hasEditor` 编辑器标签页还是 `Swarm` 独立子帧而漏挂 `#agy-new-themes-fonts` 或拔掉 `data-agy-font`，运行时均自动补挂 `Google Sans Flex` 字体表并保底驱动 `body:not([data-agy-font="inter"])` 字宽/字重轴（同时严格隔离 Monaco、Xterm、KaTeX 与图标字体）；
+  - 新增内部桥接族 `AgSarasaUI` `@font-face`（`100..299 -> Light`、`300..499 -> Regular`、`500..639 -> SemiBold`、`640..900 -> Bold` 及其斜体），紧随 `'Google Sans Flex', 'Google Sans'` 之后、排在 `system-ui / Segoe UI` 之前，彻底解决官方 `350` 字重导致 `Sarasa-SuperTTC` 向下误落 `Light (300)` 发虚及 Windows `FontLink` 微软雅黑截胡两大隐患；
+  - 对话正文与 Markdown/Artifact（`[data-markdown-root]` 等）100% 保持 `Anthropic Serif` + `Sarasa Mono Slab SC` 经典书卷衬线，局部隔离外层 `wdth: 92` 窄轴污染，并在 Windows `DirectWrite`（`html[data-ag-os="win32"]`）下为 `<p> / <li> / <blockquote> / <td>` 全量补齐 `'wght' 400/500/600, 'opsz' 16` 轴驱动，防止子节点回落 `300 Display Light`。
+- **macOS 浅色模式全域活字润墨与 UI 视觉字重微平衡（严格限定 `html[data-ag-os="darwin"]`，Windows 保持零改动）（`core/theme.css`）**：
+  - 采用自适配文字本身颜色的 `color-mix(in srgb, currentColor ..., transparent)` 微光晕，为 macOS `CoreText` 暖纸浅色模式下的 UI 全局、对话正文与 Markdown 标题/加粗赋予温润活字纸面压印感（代码块、Monaco 编辑器、终端与微字号指标胶囊保持零阴影锐利边缘）；
+  - 针对润墨带来的笔画光学扩张，精细微调 macOS 浅色 UI 初始字重（UI 标准字重极轻微下调 `350 -> 340` / 侧栏行 `400 -> 388`，UI 中黑与加粗字重适度收细 `450 -> 430` / 控件 `500 -> 455` / 选中项 `520 -> 488` / UI 粗体 `650 -> 545~560`），兼顾纸墨温度与笔画呼吸感。
+- **修复 `2.33.0` 移除 `data-newux-theme="onyx"` 后的选择器失配与 `doctor` 假绿盲区（`core/theme.css` / `install.mjs`）**：
+  - 为浅色/深色/暖炭深色侧栏选中项 `.agy-sidebar-row[data-selected="true"]` 与 `.surface-composer-card` 补齐无 `data-newux-theme` 的 `body[data-agy-theme]` 并列选择器，防止 `2.33.0` 新增原生内阴影微框穿透暖纸侧栏；
+  - `node install.mjs doctor` 按通道精确核对运行中主进程参数与 `cdpStatus`（`ready` / `missing_opt_in_flag` / `app_not_running`），未带端口运行时明确返回 `ok: false` 与 `remediation` 引导，消除静默假绿。
+- **扩充静态汉化词典 70 条至 `1,860` 条（`core/i18n.json`）**：
+  - 覆盖 `2.33.0` 新增插件组合包（`Bundles`）、内置浏览器数据与按站点管理 Cookie、快捷键方案（`Keybinding Scheme`）、外观字体 `System UI` / `Appears larger on mobile`、支线提问插入主对话、语音听写麦克风状态、虚拟机初始化流程（`Setup Script`）与蜂群回放对比文案，严格保持 0 大小写与弯直引号碰撞。
+
+---
+
+## [v5.4.3] - 2026-11-18
+
+> **适用版本**：Antigravity `2.32.2+` / `2.32.1`（`CL=1022991777`，向下完全兼容 `2.32.0` / `2.31.x` / `2.30.0`）  
+> **核验基线**：macOS `2.32.2` × Windows 11 `2.32.2`（Electron `44.9.1` `wcv` 三层堆栈、多路平铺分屏、`/btw` 支线提问与子 Agent 侧栏实时指标胶囊、`Gemini 4 Carbon` 512k 动态上下文及全链路 CDP 断言验收）  
+> **社区致谢**：特别感谢 [@CaramelizedCUDA](https://github.com/CaramelizedCUDA)（[Issue #16](https://github.com/Anarcadia/chuanban-antigravity-theme-patch/issues/16) · [PR #17](https://github.com/Anarcadia/chuanban-antigravity-theme-patch/pull/17)）对多路分屏、`/btw` 支线提问侧栏独立指标胶囊与窄栏动态折行阈值的完整根因分析与高质量实现！
+
+### Fixed（多路分屏/`/btw`/子 Agent 侧栏独立指标胶囊、Swarm 深色预设瞬时中继、冷启动自锁修复、历史标题隔离与标题补丁交互复制闭环）
+- **支持双/三/四分屏对话、`/btw`（支线提问）与子 Agent 侧栏对话标签页独立实时指标胶囊及窄分屏动态折行（`core/daemon.mjs` / `core/runtime.js` / `core/theme.css` / `install.mjs`，合入 [#17](https://github.com/Anarcadia/chuanban-antigravity-theme-patch/pull/17) 修复 [#16](https://github.com/Anarcadia/chuanban-antigravity-theme-patch/issues/16)）**：
+  - 将单输入框单例挂载升级为全输入框遍历（`getAllInputBoxes()` + `.ag-live-metrics-pill`，仅当前聚焦面板保留唯一 `#ag-live-metrics-pill` 向后兼容），通过 `conversation-view[data-cascade-id]`、`side-question-tab-conversation[data-cascade-id]`、`subagent-tab-conversation[data-cascade-id]`（含 `[data-media-drop-scope="subpane"]`）及 `[data-active-tab-id^="side_question__"]` / `[data-active-tab-id^="subagent_convo__"]` 精准绑定各分屏、`/btw` 与子 Agent 标签页独立会话（未发送空白草稿与混合新建首页零串染，无模型选择器面板自动隐藏胶囊左分割竖线），并基于 `WeakMap` 隔离各面板 `ResizeObserver` 与悬浮详情卡（无缝兼容标题外挂 `160ms` 复制按钮悬停桥接，流式刷新期间自动保持 `✓ 已复制` 状态不冲刷）；
+  - `daemon.mjs` 将每个 CDP 目标的标量订阅升级为 `watchedCascadeIds[]` 与 `perCascadeState` 映射表，单拍批量推送多路会话指标；`runtime.js` 依据胶囊自然 `scrollWidth` 动态上调 `middle -> bottom` 折行阈值（保留 `+16px` 滞回与极窄单行省略兜底），根治窄分屏下 `+N sub` 被过早截断的问题。
+- **加固 `plugin://swarm--` 子帧 `darkPreset`（📖 ↔ 🌙）`<1ms` 瞬时同步与重载/损坏配置防回退保护（`core/daemon.mjs` / `core/runtime.js`）**：
+  - 新增 `targetDarkPresets` 宿主预设状态表、`resolveParentDarkPreset()`、`syncDarkPresetToChildIframes()` 与 `window.__ag_set_host_dark_preset` / `window.__ag_host_dark_preset` 预置契约，同步写入子帧 `NewDocument` 注入签名，彻底消除切换「Claude 暖纸深夜」时的 ~200ms 异色闪烁以及 `--safe-mode` 或 `user/config.json` 损坏保护态下新开/重载子帧回退冷碳黑的分裂缺陷。
+- **修复 `coldBootHealer` 二次复检（`attempt === 2`）被自身 `HEAD /main.js` 探测条目污染导致自锁 `no-perf-entry` 的缺陷（`core/runtime.js`）**：
+  - 根治第 1 轮 `fetch('/main.js', { method: 'HEAD' })` 向 `PerformanceResourceTiming` 写入 `initiatorType: "fetch"`（`decodedBodySize: 0`）后，第 2 轮复检 `entries[entries.length - 1]` 误取 0 字节 `HEAD` 条目而提前退出（`skippedReason: "no-perf-entry"`）的隐藏缺陷；
+  - 新增 `resolveInitialMainBundleSize()` 优先筛选 `initiatorType === 'script'` 非零条目并在模块初始化时持久化快照 `window.__ag_coldboot_initial_main_size`，同时免疫长会话 250 条 `ResourceTiming` 环形缓冲淘汰。
+- **升级中文标题外挂状态提示与悬浮详情卡「一键复制修复命令」闭环（`core/daemon.mjs` / `core/runtime.js` / `core/theme.css`）**：
+  - 修正 `daemon.mjs` 对 `antigravity-zh-title-patch.py` v2.1 输出 `中文标题补丁写入磁盘成功` 的自动修补日志识别；
+  - 针对客户端自动升级（如 `2.32.2`）后的 `tcc_blocked`（macOS「App 管理」权限拦截）与 `stale_inode`（磁盘已修补但后台 `language_server` 仍驻留旧镜像）两类状态，重构 `#ag-live-metrics-tooltip .ag-tt-warn` 告警卡片：支持完整自动换行防截断、清晰说明拦截/重载原因、展示完整可执行终端命令，并新增 `160ms` 悬停桥接与 `.ag-tt-copy-btn` **「复制命令」一键交互按钮**（无告警时继续保持 `pointer-events: none` 零遮挡）。
+- **补齐历史对话列表 `[data-testid="conversation-row-history"]` 汉化隔离保护与排版对称（`core/runtime.js` / `core/daemon.mjs` / `core/theme.css`）**：
+  - 同步排除 `[data-testid="conversation-row-history"]` 下的会话链接 `aria-label` 与 `.truncate` 标题节点，防止用户在历史对话列表中的英文会话标题（如 `Settings` / `Overview` / `Tasks`）被词典误翻。
+- **新增 macOS / Linux `LaunchAgent` 后台日志体积原位自截断保护（`core/daemon.mjs`）**：
+  - 针对 `2.32.2` 切换会话重建 `plugin://swarm--*` OOPIF 子帧产生的挂载日志，每 ~60s 巡检 `/tmp/antigravity-font-daemon.log`（及 `.err`），超过 `256 KB` 时保留最新 `64 KB` 完整行原位覆写（保持相同 `inode`，兼容 `O_APPEND` 句柄），杜绝长周期常驻日志无限膨胀。
+
+### Added（Antigravity `2.32.2` 与 `Gemini 4 Carbon` 模型矩阵汉化扩充至 `1,790` 条）
+- **新增 50 条 `2.32.2` 静态 UI 词条至 `1,790` 条（`core/i18n.json`）与 5 组精准动态规则（`core/runtime.js`）**：
+  - 补齐账号与订阅页后端动态下发文案（`Your Plan`、`Your Plan: <Tier>` → `当前套餐：<Tier>`、`You are subscribed to the best Google AI plan.`、`Available AI Credits: <N>`、`Invite a Friend`、`Authenticated via / Managed by Enterprise Gateway`）、模型低配额告警（`Your quota for this model is running low.`）、Best-of-N 退出反馈问卷全套 8 条、MCP 参数重启说明、Google Drive `@drive:` 指引、远程会话手机扫码接续及校验超时提示，保持 100% 原始 JSON 零重复键、零大小写与弯直引号碰撞；
+  - 新增 `RE_MODEL_EFFORT_LABEL` 并扩展 `RE_EFFORT_SUFFIX` / `EFFORT_MAP`（在 `Best of N` 多选、模型选择器 `aria-label`、单档位模型行与配额弹窗中自动将 `Gemini 4 Carbon (Minimal)` / `Gemini 4 Carbon (Medium)` / `GPT-OSS 120B (Medium)` / `Gemini 4 Hydrogen (XHigh)` 译为 `(最低)` / `(中)` / `(超高)`）及 `RE_SUMMARY_EXITED_CODE` / `RE_EXITED_CODE_ONLY`（将聊天流失败命令状态尾巴 `· Exited with code <N>` 实时译为 `· 退出码 <N>`）。
+
+---
+
 ## [v5.4.2] - 2026-11-17
 
 > **适用版本**：Antigravity `2.32.1+` / `2.32.0`（向下完全兼容 `2.31.x` / `2.30.0`）  

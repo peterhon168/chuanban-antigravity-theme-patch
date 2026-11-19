@@ -2,9 +2,9 @@
 /**
  * chuanban-antigravity-theme-patch · CDP Theme & Live Metrics Daemon (core/daemon.mjs)
  *
- * 架构特性（v5.4.2）：
+ * 架构特性（v5.5.0）：
  * 1. 动态 Node 分级：
- *    - Node >= 22.0：完整启用昼夜双模式独立主题（暖纸浅色三预设 + 深色 onyx / claude-warm 双预设）、四层字体、输入框三态、1740条母语级汉化、宿主独占指纹门禁、死锁与冷启动兜底包自愈及 2.32.1/2.32.0 curtainView/Swarm 适配。
+ *    - Node >= 22.0：完整启用昼夜双模式独立主题（暖纸浅色三预设 + 深色 onyx / claude-warm 双预设）、Google Sans Flex 原生西文引擎 × 更纱黑体 UI 精密字重桥接 + Anthropic Serif 正文、输入框三态、1860条母语级汉化、宿主独占指纹门禁、死锁与冷启动兜底包自愈及 2.33.0+ CDP Opt-in 自动接力（M2）。
  *    - Node >= 22.13：动态 `await import('node:sqlite')` 解锁底部实时会话指标胶囊（O(1) 增量尾行解析 + WSL2 双轨只读读取）；低版本优雅降级绝不崩溃。
  * 2. 模块化与热重载：
  *    - 周期性检测 `user/config.json`、`user/custom.css`、`user/i18n.override.json`、`user/custom.js` 的 mtime，
@@ -20,7 +20,7 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { execFile, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -288,7 +288,7 @@ function resolveActiveChannelEndpoints(channelMode = 'auto', userCfg = {}) {
 // ============================================================================
 // 2. 动态构建注入载荷（支持 core/ + user/ 实时合并与热更新签名）
 // ============================================================================
-const BASE_VERSION = '20261117-v5.4.2';
+const BASE_VERSION = '20261119-v5.5.0';
 let cachedBundleSig = '';
 let cachedInjectScript = '';
 let cachedPatchVersion = '';
@@ -332,6 +332,7 @@ let activeConfig = {
     deadlockHealer: true,
     coldBootHealer: true,
     zoomShortcuts: true,
+    cdpAutoRelaunch: true,
     customCss: true,
     customJs: true
   },
@@ -502,6 +503,9 @@ function rebuildBundleIfNeeded() {
     rawDarkPreset === '暖炭'
       ? 'claude-warm'
       : 'onyx';
+  if (activeConfig && darkPreset !== activeConfig.darkPreset) {
+    targetDarkPresets.clear();
+  }
   const rawCtxLimit = Number(userCfg.contextLimit);
   const contextLimit = Number.isFinite(rawCtxLimit) && rawCtxLimit > 0 ? rawCtxLimit : 256000;
   const rawCtxOverride = Number(userCfg.contextLimitOverride);
@@ -527,6 +531,7 @@ function rebuildBundleIfNeeded() {
       deadlockHealer: true,
       coldBootHealer: true,
       zoomShortcuts: true,
+      cdpAutoRelaunch: true,
       customCss: true,
       customJs: true
     },
@@ -559,6 +564,21 @@ function rebuildBundleIfNeeded() {
   ) {
     normalizedSelectors.excludeI18n +=
       ', .monaco-editor, .monaco-diff-editor, .xterm, [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, [class*="onyx-key"]';
+  }
+  if (
+    typeof normalizedSelectors.excludeI18n === 'string' &&
+    normalizedSelectors.excludeI18n.trim() &&
+    !normalizedSelectors.excludeI18n.includes('conversation-row-history')
+  ) {
+    normalizedSelectors.excludeI18n +=
+      ', [data-testid="conversation-row-history"] a[href^="/c/"], [data-testid="conversation-row-history"] span.truncate';
+  }
+  if (
+    typeof normalizedSelectors.excludeI18n === 'string' &&
+    normalizedSelectors.excludeI18n.trim() &&
+    !normalizedSelectors.excludeI18n.includes('ag-live-metrics-pill')
+  ) {
+    normalizedSelectors.excludeI18n += ', .ag-live-metrics-pill, [data-ag-metrics-pill]';
   }
 
   const DEFAULT_ALLOWED_ORIGINS = [
@@ -656,14 +676,16 @@ function rebuildBundleIfNeeded() {
   return true;
 }
 
-rebuildBundleIfNeeded();
-
 // ============================================================================
 // 3. 单实例 PID 锁与协作式所有权围栏（防跨周期陈旧锁自杀、防跨完整性双实例并存）
 // ============================================================================
 const attachedTargets = new Map();
 const targetThemeModes = new Map();
+const targetDarkPresets = new Map();
 const targetMetaMap = new Map();
+
+rebuildBundleIfNeeded();
+
 const MY_PROC_START_MS = Math.round(Date.now() - process.uptime() * 1000);
 const DAEMON_LOG_FILE = path.join(os.tmpdir(), 'ag-theme-daemon.log');
 
@@ -843,6 +865,7 @@ function shutdownDaemon(reason, unlinkStopFile = false) {
   }
   attachedTargets.clear();
   targetThemeModes.clear();
+  targetDarkPresets.clear();
   targetMetaMap.clear();
   process.exit(0);
 }
@@ -1061,17 +1084,26 @@ const NO_META_RESCAN_LOCAL_MS = 2500;
 const NO_META_RESCAN_UNC_MS = 15000;
 const childMetricsCache = new Map(); // dbPath -> { sig, hasData, calls, totalIn, totalCache, totalOut, totalThink, totalResp }
 const lineageStateByDir = new Map(); // conversationsDir -> dirState
-let zhTitleStatus = { state: 'ok', label: '', detail: '' };
+let zhTitleStatus = { state: 'ok', label: '', detail: '', cmd: '' };
 
-function setZhTitleStatus(nextState, label = '', detail = '') {
+function escapeHtmlSafe(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function setZhTitleStatus(nextState, label = '', detail = '', cmd = '') {
   if (
     zhTitleStatus.state === nextState &&
     zhTitleStatus.label === label &&
-    zhTitleStatus.detail === detail
+    zhTitleStatus.detail === detail &&
+    zhTitleStatus.cmd === cmd
   ) {
     return;
   }
-  zhTitleStatus = { state: nextState, label, detail };
+  zhTitleStatus = { state: nextState, label, detail, cmd };
   metricsCache.clear();
   lastBestEffortPayloadCache.clear();
   metricsConfigEpoch += 1;
@@ -2174,7 +2206,7 @@ function parseConversationMetrics(cascadeId, endpointOrDir, precomputedState = n
       process.platform === 'darwin' &&
       (zhTitleStatus.state === 'tcc_blocked' || zhTitleStatus.state === 'stale_inode');
     const zhWarnInlineHtml = zhWarnActive
-      ? `<span class="ag-sep">·</span><span class="ag-zh-warn-dot" title="${zhTitleStatus.label}">●</span>`
+      ? `<span class="ag-sep">·</span><span class="ag-zh-warn-dot" title="${escapeHtmlSafe(zhTitleStatus.label)}">●</span>`
       : '';
     const subSyncing = isDraining || partialStale;
     const subInlineHtml =
@@ -2207,8 +2239,12 @@ function parseConversationMetrics(cascadeId, endpointOrDir, precomputedState = n
       childCount > 0
         ? `<div class="ag-tt-row"><span class="ag-tt-lbl">累计输出量</span><span class="ag-tt-val">总计 ${fmtTok(combinedOut)} (主 ${fmtTok(totalOut)} + 子 ${fmtTok(childOut)})</span></div>`
         : `<div class="ag-tt-row"><span class="ag-tt-lbl">累计输出量</span><span class="ag-tt-val">总计 ${fmtTok(totalOut)} (思考链 ${fmtTok(totalThink)} + 正文/工具 ${fmtTok(totalResp)})</span></div>`;
+    const zhCmdEsc = zhWarnActive && zhTitleStatus.cmd ? escapeHtmlSafe(zhTitleStatus.cmd) : '';
+    const zhCmdRowHtml = zhCmdEsc
+      ? `<div class="ag-tt-warn-cmd-row"><code class="ag-tt-warn-cmd">${zhCmdEsc}</code><button type="button" class="ag-tt-copy-btn" data-ag-copy-cmd="${zhCmdEsc}">复制命令</button></div>`
+      : '';
     const zhWarnRowHtml = zhWarnActive
-      ? `<div class="ag-tt-warn"><span class="ag-tt-warn-lbl">⚠ ${zhTitleStatus.label}</span><span class="ag-tt-warn-val">${zhTitleStatus.detail}</span></div>`
+      ? `<div class="ag-tt-warn"><div class="ag-tt-warn-hdr"><span class="ag-tt-warn-lbl">⚠ ${escapeHtmlSafe(zhTitleStatus.label)}</span></div><span class="ag-tt-warn-val">${escapeHtmlSafe(zhTitleStatus.detail)}</span>${zhCmdRowHtml}</div>`
       : '';
 
     const tooltipRows = [
@@ -2319,6 +2355,51 @@ function syncThemeToChildIframes(parentTargetId, mode) {
   }
 }
 
+function resolveParentDarkPreset(target, endpoint) {
+  let curId = target?.parentId || null;
+  const seen = new Set();
+  while (curId && !seen.has(curId)) {
+    seen.add(curId);
+    if (targetDarkPresets.has(curId)) {
+      return targetDarkPresets.get(curId);
+    }
+    curId = targetMetaMap.get(curId)?.parentId || null;
+  }
+  const ch = endpoint?.channel || null;
+  for (const [id, entry] of attachedTargets.entries()) {
+    if (
+      entry.hostConfirmed &&
+      entry.type === 'page' &&
+      (!ch || entry.endpoint?.channel === ch) &&
+      targetDarkPresets.has(id)
+    ) {
+      return targetDarkPresets.get(id);
+    }
+  }
+  return null;
+}
+
+function syncDarkPresetToChildIframes(parentTargetId, rawDarkPreset) {
+  if (!activeConfig.enabled) return;
+  const nextDarkPreset = String(rawDarkPreset || '').trim().toLowerCase() === 'claude-warm' ? 'claude-warm' : 'onyx';
+  targetDarkPresets.set(parentTargetId, nextDarkPreset);
+  const parentEntry = attachedTargets.get(parentTargetId);
+  const parentChannel = parentEntry?.endpoint?.channel || null;
+  for (const [, entry] of attachedTargets.entries()) {
+    if (!entry.hostConfirmed || entry.type !== 'iframe') continue;
+    if (!belongsToParentTarget(entry, parentTargetId, parentChannel)) continue;
+    entry
+      .send('Runtime.evaluate', {
+        expression: `window.__ag_set_host_dark_preset && window.__ag_set_host_dark_preset(${JSON.stringify(nextDarkPreset)})`,
+        returnByValue: false
+      })
+      .catch(() => {});
+    if (entry.updateNewDocScript) {
+      entry.updateNewDocScript().catch(() => {});
+    }
+  }
+}
+
 function getTargetOriginKey(urlStr) {
   const raw = String(urlStr || '').trim();
   if (!raw) return '';
@@ -2409,6 +2490,55 @@ function isAllowedOrigin(urlStr) {
   return activeConfig.allowedOrigins.some((prefix) => urlStr.startsWith(prefix));
 }
 
+const CASCADE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_WATCHED_CASCADES = 12;
+
+function normalizeCascadeIdList(raw) {
+  const candidates = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === 'string') candidates.push(item);
+    }
+  } else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed) {
+      let decoded = trimmed;
+      try {
+        decoded = decodeURIComponent(trimmed);
+      } catch {}
+      for (const part of decoded.split(/[+,]/)) {
+        candidates.push(part);
+      }
+    }
+  }
+  const seen = new Set();
+  const out = [];
+  for (const item of candidates) {
+    const clean = String(item || '').trim().toLowerCase();
+    if (!CASCADE_UUID_RE.test(clean) || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+    if (out.length >= MAX_WATCHED_CASCADES) break;
+  }
+  return out;
+}
+
+function parseMetricsSubscriptionPayload(rawPayload) {
+  const raw = String(rawPayload ?? '').trim();
+  if (!raw) return { valid: false, ids: [] };
+  if (raw.startsWith('[')) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return { valid: true, ids: normalizeCascadeIdList(arr) };
+      }
+    } catch {}
+    return { valid: false, ids: [] };
+  }
+  const ids = normalizeCascadeIdList(raw);
+  return { valid: ids.length > 0, ids };
+}
+
 function attachTarget(target, endpoint) {
   const wsUrl = target.webSocketDebuggerUrl;
   if (!wsUrl) return Promise.resolve(false);
@@ -2426,9 +2556,9 @@ function attachTarget(target, endpoint) {
     try {
       const ws = new WebSocket(wsUrl);
       let msgId = 1;
-      let activeCascadeId = '';
-      let lastPushedHash = '';
-      let lastRenderedSig = '';
+      let watchedCascadeIds = [];
+      let hasExplicitSubscription = false;
+      const perCascadeState = new Map(); // cascadeId -> { lastPushedHash, lastRenderedSig }
       let evalScriptId = null;
       const pendingCallbacks = new Map();
 
@@ -2452,26 +2582,24 @@ function attachTarget(target, endpoint) {
 
       const buildTargetInjectScript = () => {
         if (!activeConfig.enabled || target.type !== 'iframe') {
-          return { script: cachedInjectScript, parentMode: '' };
+          return { script: cachedInjectScript, parentMode: '', parentDarkPreset: '' };
         }
         const parentMode = resolveParentThemeMode(target, endpoint) || '';
-        if (parentMode !== 'dark' && parentMode !== 'light') {
-          return {
-            script: `window.__ag_host_theme_mode=null;\n${cachedInjectScript}`,
-            parentMode: ''
-          };
-        }
+        const parentDarkPreset = resolveParentDarkPreset(target, endpoint) || '';
+        const modeVal = parentMode === 'dark' || parentMode === 'light' ? parentMode : null;
+        const darkVal = parentDarkPreset === 'claude-warm' || parentDarkPreset === 'onyx' ? parentDarkPreset : null;
         return {
-          script: `window.__ag_host_theme_mode=${JSON.stringify(parentMode)};\n${cachedInjectScript}`,
-          parentMode
+          script: `window.__ag_host_theme_mode=${modeVal ? JSON.stringify(modeVal) : 'null'};\nwindow.__ag_host_dark_preset=${darkVal ? JSON.stringify(darkVal) : 'null'};\n${cachedInjectScript}`,
+          parentMode: modeVal || '',
+          parentDarkPreset: darkVal || ''
         };
       };
 
       const updateNewDocScript = (force = false) => {
         newDocQueue = newDocQueue
           .then(async () => {
-            const { script, parentMode } = buildTargetInjectScript();
-            const nextSig = `${activeConfig.enabled}|${cachedPatchVersion}|${parentMode}`;
+            const { script, parentMode, parentDarkPreset } = buildTargetInjectScript();
+            const nextSig = `${activeConfig.enabled}|${cachedPatchVersion}|${parentMode}|${parentDarkPreset || ''}`;
             if (!force && evalScriptId && nextSig === lastNewDocSig) return;
             if (evalScriptId) {
               await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: evalScriptId });
@@ -2492,6 +2620,9 @@ function attachTarget(target, endpoint) {
       };
 
       const inject = async () => {
+        if (target.type === 'page') {
+          hasExplicitSubscription = false;
+        }
         const { script } = buildTargetInjectScript();
         const res = await send('Runtime.evaluate', {
           expression: script,
@@ -2510,6 +2641,9 @@ function attachTarget(target, endpoint) {
           if (target.type === 'page') {
             if (!activeConfig.enabled) {
               targetThemeModes.delete(target.id);
+              targetDarkPresets.delete(target.id);
+              watchedCascadeIds = [];
+              perCascadeState.clear();
             } else {
               const resolvedMode = res?.result?.result?.value;
               if (resolvedMode === 'dark' || resolvedMode === 'light') {
@@ -2526,71 +2660,135 @@ function attachTarget(target, endpoint) {
         }
       };
 
-      const syncMetricsForSession = async (force = false) => {
+      const syncMetricsForSession = async (force = false, skipDomEval = false) => {
         if (target.type === 'iframe' || !DatabaseSync || !activeConfig.modules.metrics || !activeConfig.enabled) return;
 
-        // 仅在尚未获知 activeCascadeId 或强制重同步时向前端发起 Runtime.evaluate，日常靠 __agRequestMetrics 绑定事件实时驱动
-        if (!activeCascadeId || force) {
+        // 仅在尚未获知前端订阅或强制重同步时向前端发起 Runtime.evaluate，日常靠 __agRequestMetrics 绑定事件实时驱动
+        if (!skipDomEval && (!hasExplicitSubscription || force)) {
           const evalRes = await send('Runtime.evaluate', {
             expression: `(function(){
-              if (window.__ag_watched_cascade_id) return window.__ag_watched_cascade_id;
-              const m = window.location.pathname.match(/\\/c\\/([0-9a-f-]{36})/i);
-              if (m) return m[1];
-              const el = document.querySelector('[data-testid=conversation-row-sidebar][data-selected=true]');
-              return el ? (el.getAttribute('data-cascade-id') || '') : '';
+              if (Array.isArray(window.__ag_watched_cascade_ids) && typeof window.__ag_watched_cascade_sig === 'string') {
+                return window.__ag_watched_cascade_ids;
+              }
+              var out = [];
+              var seen = {};
+              var add = function(v) {
+                var s = String(v || '').trim().toLowerCase();
+                if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) && !seen[s]) {
+                  seen[s] = true;
+                  out.push(s);
+                }
+              };
+              var addTab = function(v) {
+                var m = String(v || '').trim().match(/^(?:side_question|subagent_convo)__([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+                if (m) add(m[1]);
+              };
+              var views = document.querySelectorAll('[data-testid="conversation-view"][data-cascade-id], [data-testid="side-question-tab-conversation"][data-cascade-id], [data-testid="subagent-tab-conversation"][data-cascade-id]');
+              for (var i = 0; i < views.length; i++) add(views[i].getAttribute('data-cascade-id'));
+              var activeTabs = document.querySelectorAll('[data-active-tab-id^="side_question__"], [data-active-tab-id^="subagent_convo__"]');
+              for (var t = 0; t < activeTabs.length; t++) addTab(activeTabs[t].getAttribute('data-active-tab-id'));
+              try {
+                var dec = decodeURIComponent(window.location.pathname || '');
+                var m = dec.match(/\\/c\\/([^/?#]+)/i);
+                if (m) {
+                  var parts = m[1].split(/[+%]/);
+                  for (var j = 0; j < parts.length; j++) add(parts[j]);
+                }
+                var sp = new URLSearchParams(window.location.search || '');
+                add(sp.get('focused'));
+                add(sp.get('cascadeId'));
+                var tabs = sp.getAll('tab');
+                for (var u = 0; u < tabs.length; u++) addTab(tabs[u]);
+              } catch (e) {}
+              if (out.length === 0) {
+                var sel = document.querySelectorAll('[data-testid=conversation-row-sidebar][data-selected=true]');
+                for (var k = 0; k < sel.length; k++) add(sel[k].getAttribute('data-cascade-id'));
+              }
+              return out;
             })()`,
             returnByValue: true
           });
-          const detected = evalRes?.result?.result?.value;
-          if (detected && /^[0-9a-f-]{36}$/i.test(detected)) {
-            activeCascadeId = detected;
+          const rawDetected = evalRes?.result?.result?.value;
+          if (Array.isArray(rawDetected)) {
+            const detectedIds = normalizeCascadeIdList(rawDetected);
+            if (!hasExplicitSubscription || detectedIds.length > 0 || rawDetected.length === 0) {
+              watchedCascadeIds = detectedIds;
+              const keep = new Set(watchedCascadeIds);
+              for (const k of perCascadeState.keys()) {
+                if (!keep.has(k)) perCascadeState.delete(k);
+              }
+            }
           }
         }
-        if (!activeCascadeId) return;
+        if (watchedCascadeIds.length === 0) return;
 
-        // 先在 Node 本地通过 statSync 检查 .db/.db-wal 与子 Agent 复合签名（兼容 Windows WSL 按需懒探测），未变化则 0 WebSocket 通信直接返回
         const currentEndpoint = attachedTargets.get(target.id)?.endpoint || endpoint;
-        const dbState = getDbState(activeCascadeId, currentEndpoint);
-        const conversationsDir = dbState?.dbPath ? path.dirname(dbState.dbPath) : '';
-        const childSnap = conversationsDir
-          ? getCompositeChildSnapshot(activeCascadeId, conversationsDir, dbState.rawSig || dbState.sig)
-          : null;
-        const sig = childSnap?.sig || dbState?.sig || 'empty';
-        const sessionKey = `${activeCascadeId}@${sig}|${metricsConfigEpoch}`;
-        const uncCoolingDown = Boolean(
-          (dbState?.uncDeferred || childSnap?.uncBackoffActive) && Date.now() < wslUncBackoffUntil
-        );
-        if (
-          !force &&
-          ((!childSnap?.isDraining && !childSnap?.partialStale && sessionKey === lastPushedHash) ||
-            (uncCoolingDown && lastRenderedSig !== ''))
-        ) {
-          return;
-        }
+        const pendingUpdates = [];
 
-        const payload = parseConversationMetrics(activeCascadeId, currentEndpoint, dbState, childSnap);
-        if (!payload || payload.transientError) {
-          if (force && payload?.cachedPayload) {
-            await send('Runtime.evaluate', {
-              expression: `window.__ag_render_metrics && window.__ag_render_metrics(${JSON.stringify(payload.cachedPayload)})`,
-              returnByValue: false
-            });
+        for (const cid of watchedCascadeIds) {
+          let cState = perCascadeState.get(cid);
+          if (!cState) {
+            cState = { lastPushedHash: '', lastRenderedSig: '' };
+            perCascadeState.set(cid, cState);
           }
-          return;
+
+          // 先在 Node 本地通过 statSync 检查 .db/.db-wal 与子 Agent 复合签名（兼容 Windows WSL 按需懒探测），未变化则 0 WebSocket 通信直接跳过
+          const dbState = getDbState(cid, currentEndpoint);
+          const conversationsDir = dbState?.dbPath ? path.dirname(dbState.dbPath) : '';
+          const childSnap = conversationsDir
+            ? getCompositeChildSnapshot(cid, conversationsDir, dbState.rawSig || dbState.sig)
+            : null;
+          const sig = childSnap?.sig || dbState?.sig || 'empty';
+          const sessionKey = `${cid}@${sig}|${metricsConfigEpoch}`;
+          const uncCoolingDown = Boolean(
+            (dbState?.uncDeferred || childSnap?.uncBackoffActive) && Date.now() < wslUncBackoffUntil
+          );
+          if (
+            !force &&
+            ((!childSnap?.isDraining && !childSnap?.partialStale && sessionKey === cState.lastPushedHash) ||
+              (uncCoolingDown && cState.lastRenderedSig !== ''))
+          ) {
+            continue;
+          }
+
+          const payload = parseConversationMetrics(cid, currentEndpoint, dbState, childSnap);
+          if (!payload || payload.transientError) {
+            if (force && payload?.cachedPayload) {
+              pendingUpdates.push({ payload: payload.cachedPayload, isTransientFallback: true });
+            }
+            continue;
+          }
+
+          const renderedSig = `${payload.hasData ? '1' : '0'}\n${payload.inlineHtml || ''}\n${payload.tooltipHtml || ''}`;
+          if (force || renderedSig !== cState.lastRenderedSig) {
+            pendingUpdates.push({
+              payload,
+              state: cState,
+              renderedSig,
+              sessionKey,
+              canCommitHash: !payload.isDraining && !payload.partialStale
+            });
+          } else if (!payload.isDraining && !payload.partialStale) {
+            cState.lastPushedHash = sessionKey;
+          } else {
+            cState.lastPushedHash = '';
+          }
         }
 
-        const renderedSig = `${payload.hasData ? '1' : '0'}\n${payload.inlineHtml || ''}\n${payload.tooltipHtml || ''}`;
-        if (force || renderedSig !== lastRenderedSig) {
-          await send('Runtime.evaluate', {
-            expression: `window.__ag_render_metrics && window.__ag_render_metrics(${JSON.stringify(payload)})`,
+        if (pendingUpdates.length > 0) {
+          const pushPayloads = pendingUpdates.map((u) => u.payload);
+          const pushRes = await send('Runtime.evaluate', {
+            expression: `if (typeof window.__ag_render_metrics === 'function') { for (const p of ${JSON.stringify(pushPayloads)}) { window.__ag_render_metrics(p); } }`,
             returnByValue: false
           });
-          lastRenderedSig = renderedSig;
-        }
-        if (!payload.isDraining && !payload.partialStale) {
-          lastPushedHash = sessionKey;
-        } else {
-          lastPushedHash = '';
+          const pushOk = Boolean(pushRes && !pushRes.error && !pushRes.result?.exceptionDetails);
+          if (pushOk) {
+            for (const u of pendingUpdates) {
+              if (u.isTransientFallback || !u.state) continue;
+              u.state.lastRenderedSig = u.renderedSig;
+              u.state.lastPushedHash = u.canCommitHash ? u.sessionKey : '';
+            }
+          }
         }
       };
 
@@ -2601,6 +2799,7 @@ function attachTarget(target, endpoint) {
             if (attachedTargets.get(target.id)?.ws === ws) {
               attachedTargets.delete(target.id);
               targetThemeModes.delete(target.id);
+              targetDarkPresets.delete(target.id);
             }
             try {
               ws.close();
@@ -2616,7 +2815,9 @@ function attachTarget(target, endpoint) {
                 JSON.stringify(!activeConfig.enabled) +
                 ' || (window.__ag_body_ready === true && !!document.getElementById("ag-custom-fonts"))), mode: ' +
                 JSON.stringify(target.type === 'iframe' ? 'iframe' : 'page') +
-                ' === "iframe" ? (window.__ag_host_theme_mode || null) : (window.__ag_resolved_theme_mode || null) })',
+                ' === "iframe" ? (window.__ag_host_theme_mode || null) : (window.__ag_resolved_theme_mode || null), darkPreset: ' +
+                JSON.stringify(target.type === 'iframe' ? 'iframe' : 'page') +
+                ' === "iframe" ? (window.__ag_host_dark_preset || window.__ag_runtime_dark_preset || (document.documentElement ? document.documentElement.getAttribute("data-ag-dark-preset") : null)) : (document.documentElement ? document.documentElement.getAttribute("data-ag-dark-preset") : null) })',
               returnByValue: true
             });
             const checkVal = checkRes?.result?.result?.value;
@@ -2631,15 +2832,32 @@ function attachTarget(target, endpoint) {
                   syncThemeToChildIframes(target.id, checkVal.mode);
                 }
               }
+              if (checkVal.darkPreset === 'claude-warm' || checkVal.darkPreset === 'onyx') {
+                const prevDarkPreset = targetDarkPresets.get(target.id);
+                targetDarkPresets.set(target.id, checkVal.darkPreset);
+                if (prevDarkPreset !== checkVal.darkPreset) {
+                  syncDarkPresetToChildIframes(target.id, checkVal.darkPreset);
+                }
+              }
             } else if (activeConfig.enabled && target.type === 'iframe') {
               const parentMode = resolveParentThemeMode(target, endpoint);
+              const parentDarkPreset = resolveParentDarkPreset(target, endpoint);
+              let needNewDocUpdate = !evalScriptId;
               if (parentMode && checkVal.mode !== parentMode) {
                 await send('Runtime.evaluate', {
                   expression: `window.__ag_set_host_theme_mode && window.__ag_set_host_theme_mode(${JSON.stringify(parentMode)})`,
                   returnByValue: false
                 });
-                await updateNewDocScript();
-              } else if (!evalScriptId) {
+                needNewDocUpdate = true;
+              }
+              if (parentDarkPreset && checkVal.darkPreset !== parentDarkPreset) {
+                await send('Runtime.evaluate', {
+                  expression: `window.__ag_set_host_dark_preset && window.__ag_set_host_dark_preset(${JSON.stringify(parentDarkPreset)})`,
+                  returnByValue: false
+                });
+                needNewDocUpdate = true;
+              }
+              if (needNewDocUpdate) {
                 await updateNewDocScript();
               }
             }
@@ -2650,7 +2868,8 @@ function attachTarget(target, endpoint) {
               injected: window.__ag_patch_version === ${JSON.stringify(cachedPatchVersion)} && (${JSON.stringify(!activeConfig.enabled)} || (window.__ag_body_ready === true && !!document.getElementById("ag-custom-fonts"))),
               skipNonHost: window.__ag_skip_non_host === true,
               kind: ${HOST_PROBE_EXPRESSION},
-              mode: window.__ag_resolved_theme_mode || null
+              mode: window.__ag_resolved_theme_mode || null,
+              darkPreset: document.documentElement ? document.documentElement.getAttribute("data-ag-dark-preset") : null
             })`,
             returnByValue: true
           });
@@ -2675,6 +2894,13 @@ function attachTarget(target, endpoint) {
               targetThemeModes.set(target.id, state.mode);
               if (prevMode !== state.mode) {
                 syncThemeToChildIframes(target.id, state.mode);
+              }
+            }
+            if (state.darkPreset === 'claude-warm' || state.darkPreset === 'onyx') {
+              const prevDarkPreset = targetDarkPresets.get(target.id);
+              targetDarkPresets.set(target.id, state.darkPreset);
+              if (prevDarkPreset !== state.darkPreset) {
+                syncDarkPresetToChildIframes(target.id, state.darkPreset);
               }
             }
           }
@@ -2736,6 +2962,7 @@ function attachTarget(target, endpoint) {
         if (attachedTargets.get(target.id)?.ws === ws) {
           attachedTargets.delete(target.id);
           targetThemeModes.delete(target.id);
+          targetDarkPresets.delete(target.id);
         }
         clearTimeout(attachTimeout);
         try {
@@ -2796,6 +3023,7 @@ function attachTarget(target, endpoint) {
           if (attachedTargets.get(target.id)?.ws === ws) {
             attachedTargets.delete(target.id);
             targetThemeModes.delete(target.id);
+            targetDarkPresets.delete(target.id);
           }
           clearTimeout(attachTimeout);
           try {
@@ -2825,6 +3053,7 @@ function attachTarget(target, endpoint) {
             if (attachedTargets.get(target.id)?.ws === ws) {
               attachedTargets.delete(target.id);
               targetThemeModes.delete(target.id);
+              targetDarkPresets.delete(target.id);
             }
             clearTimeout(attachTimeout);
             try {
@@ -2897,12 +3126,24 @@ function attachTarget(target, endpoint) {
           }
           if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === '__agRequestMetrics') {
             if (!hostConfirmed) return;
-            const nextId = String(msg.params.payload || '').trim();
-            if (/^[0-9a-f-]{36}$/i.test(nextId)) {
-              activeCascadeId = nextId;
-              lastPushedHash = '';
-              lastRenderedSig = '';
-              syncMetricsForSession(true);
+            const parsedSub = parseMetricsSubscriptionPayload(msg.params.payload);
+            if (parsedSub.valid) {
+              watchedCascadeIds = parsedSub.ids;
+              hasExplicitSubscription = true;
+              const keep = new Set(watchedCascadeIds);
+              for (const k of perCascadeState.keys()) {
+                if (!keep.has(k)) perCascadeState.delete(k);
+              }
+              for (const cid of watchedCascadeIds) {
+                const st = perCascadeState.get(cid);
+                if (st) {
+                  st.lastPushedHash = '';
+                  st.lastRenderedSig = '';
+                }
+              }
+              if (watchedCascadeIds.length > 0) {
+                syncMetricsForSession(true, true);
+              }
             }
             return;
           }
@@ -2940,10 +3181,13 @@ function attachTarget(target, endpoint) {
             return;
           }
           if (msg.method === 'Runtime.bindingCalled' && msg.params?.name === '__agSetDarkPreset') {
-            if (!hostConfirmed || target.type !== 'page' || SAFE_MODE || !activeConfig.enabled) {
+            if (!hostConfirmed || target.type !== 'page' || !activeConfig.enabled) {
               return;
             }
-            persistDarkPresetToUserConfig(msg.params.payload);
+            syncDarkPresetToChildIframes(target.id, msg.params.payload);
+            if (!SAFE_MODE) {
+              persistDarkPresetToUserConfig(msg.params.payload);
+            }
             return;
           }
           if (
@@ -2952,6 +3196,7 @@ function attachTarget(target, endpoint) {
             msg.params?.frame?.url
           ) {
             currentTargetUrl = String(msg.params.frame.url);
+            hasExplicitSubscription = false;
           }
           if (
             msg.method === 'Page.frameNavigated' ||
@@ -2987,6 +3232,7 @@ function attachTarget(target, endpoint) {
         if (attachedTargets.get(target.id)?.ws === ws) {
           attachedTargets.delete(target.id);
           targetThemeModes.delete(target.id);
+          targetDarkPresets.delete(target.id);
         }
         finishAttach(false);
       };
@@ -3013,9 +3259,10 @@ function attachTarget(target, endpoint) {
           if (u) currentTargetUrl = String(u);
         },
         setActiveCascade: (cid) => {
-          activeCascadeId = cid;
-          lastPushedHash = '';
-          lastRenderedSig = '';
+          const ids = normalizeCascadeIdList(cid);
+          watchedCascadeIds = ids;
+          hasExplicitSubscription = ids.length > 0;
+          perCascadeState.clear();
         }
       });
     } catch {
@@ -3053,8 +3300,9 @@ function probeZhTitleLiveState(pyBin, scriptPath) {
       if (activeRecs.some((r) => r.diskState === 'PATCHED' && r.liveState === 'STALE_RUNNING_INODE')) {
         setZhTitleStatus(
           'stale_inode',
-          '标题补丁待内存重载',
-          '磁盘已修补但运行中服务仍挂载旧镜像，运行 reload-hub 或重启生效'
+          '中文标题补丁待重载生效',
+          '磁盘补丁已自动修补完毕，但运行中服务仍挂载更新前旧镜像。可在对话空闲时重启客户端，或在终端执行下方命令热重载（热重载会刷新窗口）：',
+          'python3 ~/.gemini/antigravity/scripts/antigravity-zh-title-patch.py reload-hub'
         );
         return;
       }
@@ -3156,8 +3404,9 @@ function ensureZhTitlePatchIfPresent() {
         zhPatchFailCount = 3;
         setZhTitleStatus(
           'tcc_blocked',
-          '标题补丁待终端授权',
-          '客户端更新后后台补丁受 macOS 权限拦截，请终端运行 patch --reload-hub'
+          '中文标题补丁待终端授权',
+          '客户端更新后，macOS「App 管理」权限拦截了后台自动修补。请在已授权该权限的终端执行下方命令（可在「系统设置 → 隐私与安全性 → App 管理」为终端开启权限）：',
+          'python3 ~/.gemini/antigravity/scripts/antigravity-zh-title-patch.py patch --reload-hub'
         );
         console.log(
           '[Daemon] zh-title auto-patch skipped (macOS App Management TCC blocks background LaunchAgent write; run `python3 ~/.gemini/antigravity/scripts/antigravity-zh-title-patch.py patch --reload-hub` in an authorized terminal).'
@@ -3178,7 +3427,7 @@ function ensureZhTitlePatchIfPresent() {
     zhPatchFailedSig = '';
     zhPatchFailCount = 0;
     lastZhPatchSig = computeZhSig();
-    if (outStr.includes('中文标题补丁注入成功')) {
+    if (outStr.includes('中文标题补丁写入磁盘成功') || outStr.includes('中文标题补丁注入成功')) {
       console.log('[Daemon] Auto-applied zh-title patch:', outStr.split('\n')[0]);
     } else if (outStr.includes('DISABLED')) {
       console.log('[Daemon] zh-title auto-patch skipped (DISABLED marker present).');
@@ -3193,6 +3442,417 @@ function ensureZhTitlePatchIfPresent() {
 }
 
 const fallbackBackoffUntil = new Map();
+const CDP_RELAUNCH_GUARD_FILE = path.join(os.tmpdir(), 'ag-cdp-relaunch-guard.json');
+const ignoredUnflaggedHostPids = new Set();
+const exemptedHostPidByChannel = new Map();
+const knownNonHostPids = new Set();
+const NON_HOST_CMD_RE = /--type=|--crashpad|--utility-sub-type=|--import=|sidecar_sdk|--ms-enable-electron-run-as-node/i;
+let isCdpRelaunching = false;
+
+function parsePosixEtimeSeconds(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return Infinity;
+  let days = 0;
+  let rest = s;
+  const dashIdx = s.indexOf('-');
+  if (dashIdx !== -1) {
+    days = parseInt(s.slice(0, dashIdx), 10);
+    if (!Number.isFinite(days)) return Infinity;
+    rest = s.slice(dashIdx + 1);
+  }
+  const parts = rest.split(':').map((p) => parseInt(p, 10));
+  if (parts.some((n) => !Number.isFinite(n))) return Infinity;
+  if (parts.length === 3) return days * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return days * 86400 + parts[0] * 60 + parts[1];
+  if (parts.length === 1) return days * 86400 + parts[0];
+  return Infinity;
+}
+
+function isPidAlive(pid) {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return Boolean(err && err.code === 'EPERM');
+  }
+}
+
+function pruneIgnoredHostPids() {
+  for (const pid of Array.from(ignoredUnflaggedHostPids)) {
+    if (!isPidAlive(pid)) {
+      ignoredUnflaggedHostPids.delete(pid);
+    }
+  }
+  for (const [ch, pid] of Array.from(exemptedHostPidByChannel.entries())) {
+    if (!isPidAlive(pid)) {
+      exemptedHostPidByChannel.delete(ch);
+    }
+  }
+  if (knownNonHostPids.size > 0) {
+    for (const pid of Array.from(knownNonHostPids)) {
+      if (!isPidAlive(pid)) {
+        knownNonHostPids.delete(pid);
+      }
+    }
+  }
+}
+
+function probeRunningHostProcesses(channelMode = 'auto', endpoints = []) {
+  const allowStable = channelMode !== 'insiders';
+  const allowInsiders = channelMode !== 'stable';
+
+  if (process.platform === 'darwin') {
+    const res = spawnSync('ps', ['-axo', 'pid=,etime=,command='], {
+      encoding: 'utf8',
+      timeout: 2500
+    });
+    if (res.status !== 0 || !res.stdout) return [];
+    const found = [];
+    for (const line of String(res.stdout).split(/\r?\n/)) {
+      const m = line.trim().match(/^(\d+)\s+(\S+)\s+(.+)$/);
+      if (!m) continue;
+      const pid = parseInt(m[1], 10);
+      const etimeRaw = m[2];
+      const cmd = m[3];
+      if (!pid || NON_HOST_CMD_RE.test(cmd) || /Helper(?:\s|\.|\/)/i.test(cmd)) continue;
+      const appMatch = cmd.match(/^(\S.*?\/Antigravity(?:\s-\sInsiders)?\.app)\/Contents\/MacOS\/(Antigravity(?:\s-\sInsiders)?)(?:\s|$)/);
+      if (!appMatch) continue;
+      const appPath = appMatch[1];
+      const binName = appMatch[2];
+      const ch = /Insiders/i.test(binName) ? 'insiders' : 'stable';
+      if ((ch === 'stable' && !allowStable) || (ch === 'insiders' && !allowInsiders)) continue;
+      found.push({
+        pid,
+        channel: ch,
+        elapsedSec: parsePosixEtimeSeconds(etimeRaw),
+        appPath,
+        exePath: `${appPath}/Contents/MacOS/${binName}`,
+        cmd,
+        hasCdpFlag: /--remote-debugging-port(?:=|\s|$)/.test(cmd),
+        hasUpdatedFlag: /--updated(?:\s|$)/.test(cmd)
+      });
+    }
+    return found;
+  }
+
+  if (process.platform === 'win32') {
+    // 双层零开销预筛：
+    // 1) 若某通道已存在活跃 DevToolsActivePort，或该通道已豁免的无参宿主主进程 PID 仍存活（SingletonLock 保证单通道唯一主进程），直接 O(1) 内存级跳过（0 tasklist + 0 PowerShell）；
+    // 2) 仅对尚未锁定的通道调用原生 C++ tasklist 检查是否存在未见过的 PID，并对渲染/GPU/Utility/sidecar_sdk 同名子进程记入 knownNonHostPids 防止重复唤醒 PowerShell。
+    const imageSpecs = [];
+    const stableEp = endpoints.find((ep) => ep.channel === 'stable');
+    const insidersEp = endpoints.find((ep) => ep.channel === 'insiders');
+    const stableExemptPid = exemptedHostPidByChannel.get('stable');
+    const insidersExemptPid = exemptedHostPidByChannel.get('insiders');
+    if (allowStable && !(stableEp && readPort(stableEp.portFile)) && !(stableExemptPid && isPidAlive(stableExemptPid))) {
+      imageSpecs.push({ channel: 'stable', img: 'Antigravity.exe' });
+    }
+    if (
+      allowInsiders &&
+      insidersEp &&
+      insidersEp.channelInstalled &&
+      !readPort(insidersEp.portFile) &&
+      !(insidersExemptPid && isPidAlive(insidersExemptPid))
+    ) {
+      imageSpecs.push({ channel: 'insiders', img: 'Antigravity - Insiders.exe' });
+    }
+    if (imageSpecs.length === 0) return [];
+
+    const candidatePids = [];
+    for (const { img } of imageSpecs) {
+      const tl = spawnSync('tasklist', ['/FI', `IMAGENAME eq ${img}`, '/FO', 'CSV', '/NH'], {
+        windowsHide: true,
+        encoding: 'utf8',
+        timeout: 2500
+      });
+      if (tl.status === 0 && tl.stdout) {
+        for (const row of String(tl.stdout).split(/\r?\n/)) {
+          const cm = row.trim().match(/^"([^"]+)","(\d+)"/);
+          if (cm && cm[1].toLowerCase() === img.toLowerCase()) {
+            const p = parseInt(cm[2], 10);
+            if (p > 0 && !ignoredUnflaggedHostPids.has(p) && !knownNonHostPids.has(p)) {
+              candidatePids.push(p);
+            }
+          }
+        }
+      }
+    }
+    if (candidatePids.length === 0) return [];
+
+    const psCmd = [
+      `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8`,
+      `$ErrorActionPreference = 'SilentlyContinue'`,
+      `$now = [DateTime]::UtcNow`,
+      `$procs = Get-CimInstance Win32_Process -Filter "Name = 'Antigravity.exe' OR Name = 'Antigravity - Insiders.exe'"`,
+      `$hostOut = @(); $nonHostPids = @()`,
+      `foreach ($p in $procs) {`,
+      `  $pidVal = [int]$p.ProcessId`,
+      `  $cmd = [string]$p.CommandLine`,
+      `  if ($cmd -match '--type=|--crashpad|--utility-sub-type=|--import=|sidecar_sdk|--ms-enable-electron-run-as-node') { $nonHostPids += $pidVal; continue }`,
+      `  $age = if ($p.CreationDate) { [Math]::Max(0, [int][Math]::Round(($now - ([DateTime]$p.CreationDate).ToUniversalTime()).TotalSeconds)) } else { 999999 }`,
+      `  $hostOut += @{ pid = $pidVal; name = [string]$p.Name; exe = [string]$p.ExecutablePath; cmd = $cmd; elapsedSec = $age }`,
+      `}`,
+      `@{ hosts = $hostOut; nonHostPids = $nonHostPids } | ConvertTo-Json -Compress -Depth 4`
+    ].join('\n');
+    const cim = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psCmd], {
+      windowsHide: true,
+      encoding: 'utf8',
+      timeout: 5000
+    });
+    if (cim.status !== 0 || !cim.stdout || !cim.stdout.trim()) return [];
+    let parsedHosts = [];
+    try {
+      const payload = JSON.parse(cim.stdout.trim());
+      const nonHosts = Array.isArray(payload?.nonHostPids)
+        ? payload.nonHostPids
+        : payload?.nonHostPids
+        ? [payload.nonHostPids]
+        : [];
+      for (const np of nonHosts) {
+        const n = Number(np);
+        if (n > 0) knownNonHostPids.add(n);
+      }
+      const rawHosts = payload?.hosts;
+      parsedHosts = Array.isArray(rawHosts) ? rawHosts : rawHosts ? [rawHosts] : [];
+    } catch {
+      return [];
+    }
+    return parsedHosts
+      .map((item) => {
+        const ch = /insiders/i.test(item.name || item.exe || '') ? 'insiders' : 'stable';
+        const cmd = String(item.cmd || '');
+        const hasCdpFlag = /--remote-debugging-port(?:=|\s|$)/i.test(cmd);
+        const pidNum = Number(item.pid) || 0;
+        if (hasCdpFlag && pidNum > 0) {
+          knownNonHostPids.add(pidNum);
+        }
+        return {
+          pid: pidNum,
+          channel: ch,
+          elapsedSec: Number.isFinite(Number(item.elapsedSec)) ? Number(item.elapsedSec) : Infinity,
+          appPath: '',
+          exePath: String(item.exe || ''),
+          cmd,
+          hasCdpFlag,
+          hasUpdatedFlag: /--updated(?:\s|$)/i.test(cmd)
+        };
+      })
+      .filter(
+        (p) =>
+          p.pid > 0 &&
+          p.exePath &&
+          ((p.channel === 'stable' && allowStable) || (p.channel === 'insiders' && allowInsiders))
+      );
+  }
+
+  if (process.platform === 'linux') {
+    const res = spawnSync('ps', ['-axo', 'pid=,etime=,command='], {
+      encoding: 'utf8',
+      timeout: 2500
+    });
+    if (res.status !== 0 || !res.stdout) return [];
+    const found = [];
+    for (const line of String(res.stdout).split(/\r?\n/)) {
+      const m = line.trim().match(/^(\d+)\s+(\S+)\s+(.+)$/);
+      if (!m) continue;
+      const pid = parseInt(m[1], 10);
+      const etimeRaw = m[2];
+      const cmd = m[3];
+      if (!pid || NON_HOST_CMD_RE.test(cmd) || /daemon\.mjs|install\.mjs/.test(cmd)) continue;
+      const binMatch = cmd.match(/^(\/\S*\/antigravity(?:-insiders)?)(?:\s|$)/i);
+      if (!binMatch) continue;
+      const exePath = binMatch[1];
+      const ch = /insiders/i.test(exePath) ? 'insiders' : 'stable';
+      if ((ch === 'stable' && !allowStable) || (ch === 'insiders' && !allowInsiders)) continue;
+      found.push({
+        pid,
+        channel: ch,
+        elapsedSec: parsePosixEtimeSeconds(etimeRaw),
+        appPath: '',
+        exePath,
+        cmd,
+        hasCdpFlag: /--remote-debugging-port(?:=|\s|$)/.test(cmd),
+        hasUpdatedFlag: /--updated(?:\s|$)/.test(cmd)
+      });
+    }
+    return found;
+  }
+
+  return [];
+}
+
+function hasActiveConversationWalWrite(endpoint, windowSec = 15) {
+  if (!endpoint) return false;
+  const dirs = [endpoint.conversationsDir].filter(Boolean);
+  if (process.platform === 'win32') {
+    const cachedWsl = wslDirsCache.get(path.join(path.dirname(endpoint.portFile || ''), 'wsl_state.json'));
+    if (cachedWsl && Array.isArray(cachedWsl.dirs)) {
+      dirs.push(...cachedWsl.dirs);
+    }
+  }
+  const now = Date.now();
+  const windowMs = windowSec * 1000;
+  for (const dir of dirs) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        if (!name.endsWith('.db-wal')) continue;
+        const st = fs.statSync(path.join(dir, name), { throwIfNoEntry: false });
+        if (st && st.size > 4096 && now - st.mtimeMs < windowMs) {
+          return true;
+        }
+      }
+    } catch {}
+  }
+  return false;
+}
+
+function maybeAutoRelaunchColdStartWithoutCdp() {
+  if (
+    SAFE_MODE ||
+    RUN_ONCE ||
+    isCdpRelaunching ||
+    !activeConfig.enabled ||
+    activeConfig.modules?.cdpAutoRelaunch === false
+  ) {
+    return false;
+  }
+
+  pruneIgnoredHostPids();
+  const hostProcs = probeRunningHostProcesses(activeConfig.channel, activeConfig.endpoints);
+  if (hostProcs.length === 0) return false;
+
+  for (const proc of hostProcs) {
+    if (proc.hasCdpFlag) continue;
+    if (ignoredUnflaggedHostPids.has(proc.pid)) continue;
+
+    const ep = activeConfig.endpoints.find((e) => e.channel === proc.channel) || activeConfig.endpoints[0];
+    if (ep && readPort(ep.portFile)) continue;
+
+    const maxWindowSec = proc.hasUpdatedFlag ? 25 : 12;
+    if (proc.elapsedSec > maxWindowSec) {
+      ignoredUnflaggedHostPids.add(proc.pid);
+      exemptedHostPidByChannel.set(proc.channel, proc.pid);
+      const msg = `[Daemon] Detected running Antigravity (${proc.channel}, PID ${proc.pid}, uptime ${proc.elapsedSec}s) started without --remote-debugging-port; skipping auto-relaunch to protect active session. Run \`node ${path.join(ROOT_DIR, 'install.mjs')} relaunch\` when idle.`;
+      console.log(msg);
+      logDaemonEvent(msg);
+      continue;
+    }
+
+    if (hasActiveConversationWalWrite(ep, 15)) {
+      ignoredUnflaggedHostPids.add(proc.pid);
+      exemptedHostPidByChannel.set(proc.channel, proc.pid);
+      const msg = `[Daemon] Skipped cold-start auto-relaunch for PID ${proc.pid}: active conversation WAL write detected within 15s.`;
+      console.log(msg);
+      logDaemonEvent(msg);
+      continue;
+    }
+
+    const guard = readJsonSafe(CDP_RELAUNCH_GUARD_FILE, {});
+    const handledPids = Array.isArray(guard.handledPids) ? guard.handledPids.map((n) => Number(n)).filter(Boolean) : [];
+    const lastAt = Number(guard.lastRelaunchAtMs) || 0;
+    if (handledPids.includes(proc.pid) || Date.now() - lastAt < 60000) {
+      ignoredUnflaggedHostPids.add(proc.pid);
+      exemptedHostPidByChannel.set(proc.channel, proc.pid);
+      logDaemonEvent(
+        `Skipped cold-start auto-relaunch for PID ${proc.pid}: guard cooldown active (lastRelaunchDeltaMs=${Date.now() - lastAt}).`
+      );
+      continue;
+    }
+
+    isCdpRelaunching = true;
+    try {
+      ignoredUnflaggedHostPids.add(proc.pid);
+      const nextGuard = {
+        lastRelaunchAtMs: Date.now(),
+        lastChannel: proc.channel,
+        lastOldPid: proc.pid,
+        reason: proc.hasUpdatedFlag ? 'cold-start-post-update' : 'cold-start-unflagged',
+        handledPids: Array.from(new Set([...handledPids.slice(-15), proc.pid]))
+      };
+      try {
+        fs.writeFileSync(CDP_RELAUNCH_GUARD_FILE, `${JSON.stringify(nextGuard, null, 2)}\n`, 'utf8');
+      } catch {}
+
+      // 终止刚冷启动的无标记主进程，并严格等待其优雅刷盘释放 SingletonLock 后再拉起带 --remote-debugging-port=0 的新进程
+      if (process.platform === 'win32') {
+        const stopPs = [
+          `$gp = Get-Process -Id ${proc.pid} -ErrorAction SilentlyContinue`,
+          `if ($gp) { [void]$gp.CloseMainWindow(); if (-not $gp.WaitForExit(1800)) { Stop-Process -Id ${proc.pid} -Force -ErrorAction SilentlyContinue } }`
+        ].join('; ');
+        spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', stopPs], {
+          windowsHide: true,
+          stdio: 'ignore',
+          timeout: 4500
+        });
+      } else {
+        try {
+          process.kill(proc.pid, 'SIGTERM');
+        } catch {}
+      }
+
+      for (let i = 0; i < 55; i++) {
+        if (!isPidAlive(proc.pid)) break;
+        sleepSync(80);
+      }
+      if (isPidAlive(proc.pid) && process.platform !== 'win32') {
+        try {
+          process.kill(proc.pid, 'SIGKILL');
+        } catch {}
+        for (let i = 0; i < 15 && isPidAlive(proc.pid); i++) {
+          sleepSync(60);
+        }
+      }
+      // 预留极短排空窗口确保 Electron SingletonLock 文件句柄完全释放
+      sleepSync(180);
+
+      if (process.platform === 'darwin' && proc.appPath) {
+        spawnSync('/usr/bin/open', ['-a', proc.appPath, '--args', '--remote-debugging-port=0'], {
+          stdio: 'ignore',
+          timeout: 5000
+        });
+      } else if (proc.exePath) {
+        const child = spawn(proc.exePath, ['--remote-debugging-port=0'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false
+        });
+        child.unref();
+      }
+
+      const okMsg = `[Daemon] Cold-start auto-relaunched Antigravity (${proc.channel}, old PID ${proc.pid}, age ${proc.elapsedSec}s) with --remote-debugging-port=0.`;
+      console.log(okMsg);
+      logDaemonEvent(okMsg);
+      return true;
+    } catch (err) {
+      logDaemonEvent(`Cold-start auto-relaunch error for PID ${proc.pid}: ${err?.message || err}`);
+    } finally {
+      isCdpRelaunching = false;
+    }
+  }
+  return false;
+}
+
+function trimPosixDaemonLogsIfNeeded() {
+  if (process.platform === 'win32') return;
+  const maxBytes = 262144; // 256 KB
+  const keepBytes = 65536; // 64 KB
+  for (const logPath of ['/tmp/antigravity-font-daemon.log', '/tmp/antigravity-font-daemon.err']) {
+    try {
+      const st = fs.statSync(logPath, { throwIfNoEntry: false });
+      if (!st || st.size <= maxBytes) continue;
+      const buf = fs.readFileSync(logPath);
+      let sliceStart = Math.max(0, buf.length - keepBytes);
+      const nlIdx = buf.indexOf(10, sliceStart);
+      if (nlIdx !== -1 && nlIdx + 1 < buf.length) {
+        sliceStart = nlIdx + 1;
+      }
+      // 原位截断覆写以保留相同 inode，兼容 LaunchAgent O_APPEND 重定向句柄
+      fs.writeFileSync(logPath, buf.subarray(sliceStart));
+    } catch {}
+  }
+}
 
 async function sync() {
   checkPidFileOwnership();
@@ -3201,9 +3861,11 @@ async function sync() {
   syncTickCount = (syncTickCount + 1) % 6000;
   try {
     if (syncTickCount % 12 === 1) ensureZhTitlePatchIfPresent();
+    if (syncTickCount % 24 === 1) trimPosixDaemonLogsIfNeeded();
     const bundleChanged = rebuildBundleIfNeeded();
     if (!activeConfig.enabled) {
       targetThemeModes.clear();
+      targetDarkPresets.clear();
     }
     const shouldHeartbeatCheck = bundleChanged || syncTickCount % 6 === 1;
 
@@ -3296,6 +3958,11 @@ async function sync() {
     await syncTargetBatch(pendingPages);
     await syncTargetBatch(pendingIframes);
 
+    // 2.33.0+ 冷启动无标记自愈（M2）：仅在 0 活跃 CDP 目标时按严苛冷启动时间窗探测并自动接力重启
+    if (pendingPages.length === 0 && attachedTargets.size === 0) {
+      maybeAutoRelaunchColdStartWithoutCdp();
+    }
+
     // 清理已关闭的目标连接
     for (const [id, entry] of attachedTargets.entries()) {
       if (!activeTargetIds.has(id)) {
@@ -3304,6 +3971,7 @@ async function sync() {
         } catch {}
         attachedTargets.delete(id);
         targetThemeModes.delete(id);
+        targetDarkPresets.delete(id);
       }
     }
     if (seenRawTargetIds.size > 0) {
