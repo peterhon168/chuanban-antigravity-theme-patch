@@ -7,11 +7,18 @@
  */
 
 (function initRealAntigravityWatchdog() {
-  // 0. 热重载幂等清理（同时强制清除早期残留的旧版模拟器 DOM 与定时器）
+  // 0. 热重载幂等清理（先彻底清除可能已挂载的残留实例/定时器，再判断当前上下文是否允许挂载）
+  if (window.__ag_watchdog_dcl_handler) {
+    try {
+      window.removeEventListener('DOMContentLoaded', window.__ag_watchdog_dcl_handler);
+    } catch (e) {}
+    window.__ag_watchdog_dcl_handler = null;
+  }
   if (typeof window.__ag_watchdog_cleanup === 'function') {
     try {
       window.__ag_watchdog_cleanup();
     } catch (e) {}
+    window.__ag_watchdog_cleanup = null;
   }
   if (window.__ag_watchdog_timer) {
     try {
@@ -28,6 +35,40 @@
   document
     .querySelectorAll('#ag-watchdog-hud, #ag-watchdog-dock-pill, #ag-watchdog-reopen-btn')
     .forEach((el) => el.remove());
+
+  // 0.5 顶层主工作台隔离守卫：
+  // core/runtime.js 会将主题与汉化同步注入到 Swarm 侧栏插件 iframe（plugin://swarm--...），并执行 user/custom.js；
+  // 监控 HUD 仅允许挂载在 Antigravity 顶层主窗口，彻底排除子 iframe、plugin:// 面板及 data:/blob: 页面。
+  const allowTestIframe = window.__AG_WATCHDOG_ALLOW_IFRAME__ === true;
+  const loc = window.location || {};
+  const hrefStr = String(loc.href || '');
+  const protoStr = String(loc.protocol || '').toLowerCase();
+  const isSubFrame = (() => {
+    try {
+      return window.top !== window;
+    } catch {
+      return true;
+    }
+  })();
+  const isPluginOrNonWorkbench =
+    protoStr === 'plugin:' ||
+    /^plugin:\/\//i.test(hrefStr) ||
+    protoStr === 'data:' ||
+    protoStr === 'blob:' ||
+    (!allowTestIframe && protoStr === 'about:');
+  if (isPluginOrNonWorkbench || (isSubFrame && !allowTestIframe)) {
+    return;
+  }
+
+  // 冷启动 document.body 尚未就绪时，延迟至 DOMContentLoaded 后单次挂载
+  if (!document.body) {
+    window.__ag_watchdog_dcl_handler = () => {
+      window.__ag_watchdog_dcl_handler = null;
+      initRealAntigravityWatchdog();
+    };
+    window.addEventListener('DOMContentLoaded', window.__ag_watchdog_dcl_handler, { once: true });
+    return;
+  }
 
   const STORAGE_POS_KEY = 'ag_wd_real_pos_v2';
   const STORAGE_CFG_KEY = 'ag_wd_real_cfg_v2';
@@ -2963,6 +3004,7 @@
       characterData: true
     });
   }
+  window.__ag_watchdog_obs = domObs;
 
   // 每秒刷新一次实时计时、Swarm 轮询与防卡死检测
   const tickTimer = setInterval(() => {
@@ -2972,15 +3014,27 @@
       } catch {}
     }
   }, 1000);
+  window.__ag_watchdog_timer = tickTimer;
 
   renderSnapshot();
 
-  // 注册热重载清理钩子
+  // 注册幂等清理函数与外部生命周期钩子
+  let cleanedUp = false;
   window.__ag_watchdog_cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     clearInterval(tickTimer);
+    window.__ag_watchdog_timer = null;
+    if (window.__ag_watchdog_dcl_handler) {
+      try {
+        window.removeEventListener('DOMContentLoaded', window.__ag_watchdog_dcl_handler);
+      } catch {}
+      window.__ag_watchdog_dcl_handler = null;
+    }
     try {
       domObs.disconnect();
     } catch {}
+    window.__ag_watchdog_obs = null;
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
     window.removeEventListener('resize', onWindowResize);
@@ -2991,9 +3045,16 @@
     if (window.extensions && window.extensions.sendAuthorities && window.extensions.sendAuthorities.__ag_wd_orig) {
       window.extensions.sendAuthorities = window.extensions.sendAuthorities.__ag_wd_orig;
     }
-    const reopenBtn = document.getElementById('ag-watchdog-reopen-btn');
-    if (reopenBtn) reopenBtn.remove();
-    hud.remove();
-    pill.remove();
+    document
+      .querySelectorAll('#ag-watchdog-hud, #ag-watchdog-dock-pill, #ag-watchdog-reopen-btn')
+      .forEach((el) => el.remove());
+    if (window.__ag_watchdog_cleanup) {
+      window.__ag_watchdog_cleanup = null;
+    }
   };
+  if (typeof ctx !== 'undefined' && ctx && typeof ctx.onCleanup === 'function') {
+    try {
+      ctx.onCleanup(window.__ag_watchdog_cleanup);
+    } catch {}
+  }
 })();
