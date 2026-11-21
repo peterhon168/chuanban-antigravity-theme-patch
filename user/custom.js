@@ -22,9 +22,22 @@
   }
   if (window.__ag_watchdog_timer) {
     try {
+      clearTimeout(window.__ag_watchdog_timer);
       clearInterval(window.__ag_watchdog_timer);
     } catch (e) {}
     window.__ag_watchdog_timer = null;
+  }
+  if (window.__ag_watchdog_render_timer) {
+    try {
+      clearTimeout(window.__ag_watchdog_render_timer);
+    } catch (e) {}
+    window.__ag_watchdog_render_timer = null;
+  }
+  if (window.__ag_watchdog_persist_timer) {
+    try {
+      clearTimeout(window.__ag_watchdog_persist_timer);
+    } catch (e) {}
+    window.__ag_watchdog_persist_timer = null;
   }
   if (window.__ag_watchdog_obs) {
     try {
@@ -104,8 +117,12 @@
     minimized: false,
     hidden: false,
     timeoutSec: 120,
-    autoHeal: false
+    autoHeal: false,
+    blur: false
   });
+
+  // 全局有效 DOM 变更版本号（由 MutationObserver 与显式刷新递增，驱动增量缓存命中）
+  let domVersion = 1;
 
   // ============================================================================
   // 1. Swarm Sidecar Origin 自动发现与实时轮询 (/api/swarm)
@@ -457,11 +474,109 @@
     return false;
   }
 
+  // 无回流轻量可见性检测（绝不触发 getBoundingClientRect / offsetParent 同步回流）
+  function isElementVisible(el) {
+    if (!el || !el.isConnected) return false;
+    let cur = el;
+    for (let depth = 0; cur && depth < 6; depth++) {
+      if (cur.hidden) return false;
+      if (cur.getAttribute) {
+        if (cur.getAttribute('aria-hidden') === 'true') return false;
+        if (cur.getAttribute('data-state') === 'closed') return false;
+      }
+      const st = cur.style;
+      if (st && (st.display === 'none' || st.visibility === 'hidden')) return false;
+      const cl = cur.classList;
+      if (cl && (cl.contains('hidden') || cl.contains('invisible'))) return false;
+      cur = cur.parentElement;
+    }
+    return true;
+  }
+
+  // 无克隆轻量文本提取（TreeWalker/递归跳过无障碍隐藏与脚本标签，收集足够字符后提前终止）
+  function collectCleanText(rootEl, skipFn, maxLen = 64) {
+    if (!rootEl) return '';
+    const softLimit = Math.max(32, maxLen * 3);
+    const parts = [];
+    let totalLen = 0;
+
+    const walk = (node) => {
+      if (!node || totalLen >= softLimit) return;
+      const nt = node.nodeType;
+      if (nt === 3) {
+        const val = node.nodeValue;
+        if (val) {
+          parts.push(val);
+          totalLen += val.length;
+        }
+        return;
+      }
+      if (nt !== 1) return;
+      if (node !== rootEl) {
+        const tag = node.tagName;
+        if (tag === 'STYLE' || tag === 'SCRIPT' || tag === 'NOSCRIPT') return;
+        if (skipFn && skipFn(node)) return;
+      }
+      for (let child = node.firstChild; child && totalLen < softLimit; child = child.nextSibling) {
+        walk(child);
+      }
+    };
+
+    try {
+      walk(rootEl);
+      return parts.join('').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+    } catch {
+      return (rootEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+    }
+  }
+
+  // O(1) 尾部文本倒序采集：仅从子树末尾回溯采集最多 maxChars 字符，绝不触发整页全量 textContent 拼接
+  function collectTailText(rootEl, maxChars = 1000) {
+    if (!rootEl) return '';
+    const chunks = [];
+    let collected = 0;
+
+    const walkBack = (node) => {
+      if (!node || collected >= maxChars) return;
+      const nt = node.nodeType;
+      if (nt === 3) {
+        const val = node.nodeValue;
+        if (val) {
+          const need = maxChars - collected;
+          if (val.length > need) {
+            chunks.push(val.slice(val.length - need));
+            collected = maxChars;
+          } else {
+            chunks.push(val);
+            collected += val.length;
+          }
+        }
+        return;
+      }
+      if (nt !== 1) return;
+      const tag = node.tagName;
+      if (tag === 'STYLE' || tag === 'SCRIPT' || tag === 'NOSCRIPT') return;
+      for (let child = node.lastChild; child && collected < maxChars; child = child.previousSibling) {
+        walkBack(child);
+      }
+    };
+
+    try {
+      walkBack(rootEl);
+      if (chunks.length === 0) return '';
+      if (chunks.length === 1) return chunks[0];
+      chunks.reverse();
+      return chunks.join('');
+    } catch {
+      return (rootEl.textContent || '').slice(-maxChars);
+    }
+  }
+
   // 读取底部「排队消息 (Queued Messages)」数量与立即发送按钮
   function getQueuedMessagesCount() {
     try {
       const card = document.querySelector('[data-testid="queued-messages-card"]');
-      if (!card || card.offsetParent === null) return 0;
+      if (!card || !isElementVisible(card)) return 0;
       const badge = card.querySelector('.rounded-full');
       if (badge) {
         const n = parseInt((badge.textContent || '').trim(), 10);
@@ -489,91 +604,103 @@
     return null;
   }
 
-  function isElementVisible(el) {
-    if (!el) return false;
-    if (el.offsetParent !== null) return true;
-    try {
-      const r = el.getBoundingClientRect();
-      return !!(r && r.width > 0 && r.height > 0);
-    } catch {
-      return false;
-    }
+  function isSrOnlyNode(el) {
+    return !!(el.classList && el.classList.contains('sr-only'));
   }
 
   function extractCleanElementText(el, maxLen = 56) {
-    if (!el) return '';
-    try {
-      const clone = el.cloneNode(true);
-      clone.querySelectorAll('.sr-only, style, script').forEach((n) => n.remove());
-      return (clone.textContent || '').replace(/\s+/g, ' ').trim().slice(0, maxLen);
-    } catch {
-      return (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, maxLen);
-    }
+    return collectCleanText(el, isSrOnlyNode, maxLen);
   }
+
+  const GLOBAL_BLOCKING_RULES = [
+    ['[data-testid="declared-permissions-modal"]', '插件与声明权限确认'],
+    ['[data-testid="computer-permissions-card"]', '系统辅助/屏幕权限授权'],
+    ['[data-testid="new-sidecar-oauth-consent-prompt"]', 'OAuth 账号授权确认'],
+    ['[data-testid="terminal-password-prompt-blocked"], [data-testid="terminal-allow-non-corp-password"]', '终端密码输入确认'],
+    ['[data-testid="webview-prompt-card"], [data-testid="browser-cert-proceed-button"]', '内置浏览器弹窗/证书确认'],
+    ['[data-testid="subagent-approve"]', '子代理操作权限审批']
+  ];
+  const GLOBAL_BLOCKING_COMBINED_SELECTOR = GLOBAL_BLOCKING_RULES.map((r) => r[0]).join(', ');
+  const inlineGateBtnCache = new WeakMap(); // lastResp -> { domVersion, btn }
 
   // 统一检测等待人工回答/审批的交互门禁（覆盖输入框上方 interaction-takeover-card 与全局权限弹窗）
   function detectUserInteractionGate(view, lastResp, isRunning, domSubagentsBlocked, isApprovalStatus) {
     const empty = { active: false, kind: '', title: '', progress: '', targetEl: null };
     const isMainDialogNode = (el) => !!(el && !(el.closest && el.closest('[data-testid^="side-question-"]')));
 
-    // 1. 优先检测主对话输入框上方接管卡片 (ask_question / 权限请求 p1c / 子代理授权 z1c)
-    const takeoverCards = document.querySelectorAll('[data-testid="interaction-takeover-card"]');
-    for (let i = 0; i < takeoverCards.length; i++) {
-      const card = takeoverCards[i];
-      if (!isMainDialogNode(card) || !isElementVisible(card)) continue;
+    // 1. 优先检测主对话输入框上方接管卡片（先单次 querySelector 快速短路）
+    const firstTakeover = document.querySelector('[data-testid="interaction-takeover-card"]');
+    if (firstTakeover) {
+      const takeoverCards =
+        isMainDialogNode(firstTakeover) && isElementVisible(firstTakeover)
+          ? [firstTakeover]
+          : document.querySelectorAll('[data-testid="interaction-takeover-card"]');
+      for (let i = 0; i < takeoverCards.length; i++) {
+        const card = takeoverCards[i];
+        if (!isMainDialogNode(card) || !isElementVisible(card)) continue;
 
-      const headerEl = card.querySelector('[data-testid="ask-question-header-text"]');
-      const sourceEl = card.querySelector('[data-testid="subagent-permission-source"]');
-      const progressEl = card.querySelector('[data-testid="ask-question-progress"]');
+        const headerEl = card.querySelector('[data-testid="ask-question-header-text"]');
+        const sourceEl = card.querySelector('[data-testid="subagent-permission-source"]');
+        const progressEl = card.querySelector('[data-testid="ask-question-progress"]');
 
-      const headerTxt = extractCleanElementText(headerEl, 56);
-      const sourceTxt = extractCleanElementText(sourceEl, 28);
-      const title =
-        sourceTxt && headerTxt
-          ? `${sourceTxt} · ${headerTxt}`.slice(0, 56)
-          : headerTxt || (sourceTxt ? `子代理权限: ${sourceTxt}`.slice(0, 56) : '');
-      const progress = progressEl ? (progressEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+        const headerTxt = extractCleanElementText(headerEl, 56);
+        const sourceTxt = extractCleanElementText(sourceEl, 28);
+        const title =
+          sourceTxt && headerTxt
+            ? `${sourceTxt} · ${headerTxt}`.slice(0, 56)
+            : headerTxt || (sourceTxt ? `子代理权限: ${sourceTxt}`.slice(0, 56) : '');
+        const progress = progressEl ? (progressEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
 
-      const isPermissionCard = !!card.querySelector(
-        '[data-testid="permission-target-editor"], [data-testid="permission-app-header"], [data-testid="permission-download-details"], [data-testid="subagent-permission-source"]'
-      );
-      const isQuestionCard =
-        !isPermissionCard &&
-        !!card.querySelector(
-          '[data-testid="ask-question-dismiss-button"], [data-testid="ask-question-collapse-button"], [data-testid="interaction-skip-button"], [data-testid="ask-question-writein"], [data-testid="ask-question-option"]'
+        const isPermissionCard = !!card.querySelector(
+          '[data-testid="permission-target-editor"], [data-testid="permission-app-header"], [data-testid="permission-download-details"], [data-testid="subagent-permission-source"]'
         );
+        const isQuestionCard =
+          !isPermissionCard &&
+          !!card.querySelector(
+            '[data-testid="ask-question-dismiss-button"], [data-testid="ask-question-collapse-button"], [data-testid="interaction-skip-button"], [data-testid="ask-question-writein"], [data-testid="ask-question-option"]'
+          );
 
-      return {
-        active: true,
-        kind: isPermissionCard ? 'approval' : isQuestionCard ? 'question' : 'approval',
-        title,
-        progress,
-        targetEl: card
-      };
+        return {
+          active: true,
+          kind: isPermissionCard ? 'approval' : isQuestionCard ? 'question' : 'approval',
+          title,
+          progress,
+          targetEl: card
+        };
+      }
     }
 
-    // 2. 检测全局及内置浏览器/终端阻塞弹窗（排除侧边栏 side-question）
-    const globalBlockingRules = [
-      ['[data-testid="declared-permissions-modal"]', '插件与声明权限确认'],
-      ['[data-testid="computer-permissions-card"]', '系统辅助/屏幕权限授权'],
-      ['[data-testid="new-sidecar-oauth-consent-prompt"]', 'OAuth 账号授权确认'],
-      ['[data-testid="terminal-password-prompt-blocked"], [data-testid="terminal-allow-non-corp-password"]', '终端密码输入确认'],
-      ['[data-testid="webview-prompt-card"], [data-testid="browser-cert-proceed-button"]', '内置浏览器弹窗/证书确认'],
-      ['[data-testid="subagent-approve"]', '子代理操作权限审批']
-    ];
-    for (let i = 0; i < globalBlockingRules.length; i++) {
-      const [selector, modalTitle] = globalBlockingRules[i];
-      const matches = document.querySelectorAll(selector);
-      for (let j = 0; j < matches.length; j++) {
-        const node = matches[j];
-        if (isMainDialogNode(node) && isElementVisible(node)) {
-          return {
-            active: true,
-            kind: 'approval',
-            title: modalTitle,
-            progress: '',
-            targetEl: node
-          };
+    // 2. 检测全局及内置浏览器/终端阻塞弹窗（合并为单次 document.querySelector 快速短路，无匹配时 O(1) 退出）
+    const firstGlobalBlock = document.querySelector(GLOBAL_BLOCKING_COMBINED_SELECTOR);
+    if (firstGlobalBlock) {
+      for (let i = 0; i < GLOBAL_BLOCKING_RULES.length; i++) {
+        const [selector, modalTitle] = GLOBAL_BLOCKING_RULES[i];
+        if (firstGlobalBlock.matches && firstGlobalBlock.matches(selector)) {
+          if (isMainDialogNode(firstGlobalBlock) && isElementVisible(firstGlobalBlock)) {
+            return {
+              active: true,
+              kind: 'approval',
+              title: modalTitle,
+              progress: '',
+              targetEl: firstGlobalBlock
+            };
+          }
+        }
+      }
+      for (let i = 0; i < GLOBAL_BLOCKING_RULES.length; i++) {
+        const [selector, modalTitle] = GLOBAL_BLOCKING_RULES[i];
+        const matches = document.querySelectorAll(selector);
+        for (let j = 0; j < matches.length; j++) {
+          const node = matches[j];
+          if (isMainDialogNode(node) && isElementVisible(node)) {
+            return {
+              active: true,
+              kind: 'approval',
+              title: modalTitle,
+              progress: '',
+              targetEl: node
+            };
+          }
         }
       }
     }
@@ -589,23 +716,34 @@
       };
     }
 
-    // 4. 兼容回复内联确认执行按钮
+    // 4. 兼容回复内联确认执行按钮（按 domVersion 缓存，无变更时跳过按钮扫描）
     if (isRunning && lastResp) {
-      const respBtns = lastResp.querySelectorAll('button');
-      for (let i = 0; i < respBtns.length; i++) {
-        const btn = respBtns[i];
-        if (!isElementVisible(btn)) continue;
-        const bTxt = (btn.textContent || '').trim();
-        const bOrig = btn.getAttribute('data-ag-orig-aria-label') || '';
-        if (/^(?:确认执行|Proceed|允许|Allow|Approve|批准)$/i.test(bTxt) || /\b(?:Proceed|Allow|Approve)\b/i.test(bOrig)) {
-          return {
-            active: true,
-            kind: 'approval',
-            title: '步骤执行确认',
-            progress: '',
-            targetEl: btn
-          };
+      const cached = inlineGateBtnCache.get(lastResp);
+      let matchedBtn = null;
+      if (cached && cached.domVersion === domVersion) {
+        matchedBtn = cached.btn && cached.btn.isConnected && isElementVisible(cached.btn) ? cached.btn : null;
+      } else {
+        const respBtns = lastResp.querySelectorAll('button');
+        for (let i = 0; i < respBtns.length; i++) {
+          const btn = respBtns[i];
+          if (!isElementVisible(btn)) continue;
+          const bTxt = (btn.textContent || '').trim();
+          const bOrig = btn.getAttribute('data-ag-orig-aria-label') || '';
+          if (/^(?:确认执行|Proceed|允许|Allow|Approve|批准)$/i.test(bTxt) || /\b(?:Proceed|Allow|Approve)\b/i.test(bOrig)) {
+            matchedBtn = btn;
+            break;
+          }
         }
+        inlineGateBtnCache.set(lastResp, { domVersion, btn: matchedBtn });
+      }
+      if (matchedBtn) {
+        return {
+          active: true,
+          kind: 'approval',
+          title: '步骤执行确认',
+          progress: '',
+          targetEl: matchedBtn
+        };
       }
     }
 
@@ -793,8 +931,22 @@
     return initial;
   }
 
-  function persistTurnStore(store) {
+  const PERSIST_THROTTLE_MS = 1800;
+  const pendingPersistStores = new Set();
+  let persistTimer = null;
+
+  function buildTurnPersistSig(store) {
+    const stepsLen = store.steps ? store.steps.length : 0;
+    const tail = stepsLen > 0 ? store.steps[stepsLen - 1] : null;
+    const tailSig = tail ? `${tail.key || ''}:${tail.title || ''}:${tail.done ? 1 : 0}:${tail.endedAt || 0}` : '';
+    return `${store.turnIdx}|${store.sqlUserTurns || 0}|${store.lastPromptSig || ''}|${store.turnStartedAt}|${store.lastActiveTs}|${store.lastStepText}|${store.lastProseLen}|${store.lastDbSig}|${store.lastSwarmSig || ''}|${store.lastBrowserSig || ''}|${store.lastIdleStatusSig || ''}|${store.wasRunning ? 1 : 0}|${store.noEffectStreak || 0}|${store.totalAutoHeals || 0}|${store.healBaselineSig || ''}|${store.lastAutoHealSentTs || 0}|${stepsLen}|${tailSig}`;
+  }
+
+  function writeTurnStoreNow(store, precomputedSig) {
     if (!store || !store.cid) return;
+    const sig = precomputedSig || buildTurnPersistSig(store);
+    if (sig === store._lastPersistedSig) return;
+    store._lastPersistedSig = sig;
     try {
       sessionStorage.setItem(
         'ag_wd_turn_' + store.cid,
@@ -822,27 +974,68 @@
     } catch {}
   }
 
-  // 提取干净的用户提问文本（剥离 .sr-only 无障碍前缀与 user-message-actions 时间戳后缀）
+  function flushPendingPersist() {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      window.__ag_watchdog_persist_timer = null;
+    }
+    if (pendingPersistStores.size === 0) return;
+    pendingPersistStores.forEach((st) => writeTurnStoreNow(st));
+    pendingPersistStores.clear();
+  }
+
+  function persistTurnStore(store, immediate = false) {
+    if (!store || !store.cid) return;
+    const sig = buildTurnPersistSig(store);
+    if (sig === store._lastPersistedSig) return;
+    if (immediate || !store._lastPersistedSig) {
+      pendingPersistStores.delete(store);
+      writeTurnStoreNow(store, sig);
+      return;
+    }
+    pendingPersistStores.add(store);
+    if (!persistTimer) {
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        window.__ag_watchdog_persist_timer = null;
+        flushPendingPersist();
+      }, PERSIST_THROTTLE_MS);
+      window.__ag_watchdog_persist_timer = persistTimer;
+    }
+  }
+
+  // 提取干净的用户提问文本（WeakMap 缓存 + 无克隆遍历剥离 .sr-only 与操作栏后缀）
+  const userTextCache = new WeakMap(); // targetEl -> { domVersion, rawLen, result }
+  function isIgnoredUserTextNode(el) {
+    if (el.classList && el.classList.contains('sr-only')) return true;
+    if (el.getAttribute) {
+      if (el.getAttribute('data-find-ignore') === 'true') return true;
+      if (el.getAttribute('data-testid') === 'user-message-actions') return true;
+    }
+    return false;
+  }
+
   function extractCleanUserText(userEl) {
     if (!userEl) return '';
-    const targetEl = userEl.querySelector('[data-testid="user-message-content"], [data-testid="user-message-bubble"]') || userEl;
-    try {
-      const clone = targetEl.cloneNode(true);
-      clone
-        .querySelectorAll('.sr-only, [data-find-ignore="true"], [data-testid="user-message-actions"], style, script')
-        .forEach((n) => n.remove());
-      return (clone.textContent || '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/^(?:You\s+said|您说|你说)\s*:?\s*/i, '')
-        .slice(0, 48);
-    } catch {
-      return (targetEl.textContent || '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/^(?:You\s+said|您说|你说)\s*:?\s*/i, '')
-        .slice(0, 48);
+    const targetEl =
+      userEl.querySelector('[data-testid="user-message-content"], [data-testid="user-message-bubble"]') || userEl;
+    const cached = userTextCache.get(targetEl);
+    if (cached && cached.domVersion === domVersion) {
+      return cached.result;
     }
+    const rawText = targetEl.textContent || '';
+    const rawLen = rawText.length;
+    const rawHead = rawLen > 48 ? rawText.slice(0, 48) : rawText;
+    if (cached && cached.rawLen === rawLen && cached.rawHead === rawHead) {
+      cached.domVersion = domVersion;
+      return cached.result;
+    }
+    const cleaned = collectCleanText(targetEl, isIgnoredUserTextNode, 64)
+      .replace(/^(?:You\s+said|您说|你说)\s*:?\s*/i, '')
+      .slice(0, 48);
+    userTextCache.set(targetEl, { domVersion, rawLen, rawHead, result: cleaned });
+    return cleaned;
   }
 
   function fmtDur(ms) {
@@ -886,10 +1079,14 @@
     return s;
   }
 
-  // 解析 SQLite 指标胶囊信息
+  // 解析 SQLite 指标胶囊信息（按 sig + inlineHtml + tooltipHtml 缓存，避免重复正则）
+  let cachedSqlKey = '';
+  let cachedSqlResult = null;
   function parseSqlMetrics(cid) {
     const m = window.__ag_last_metrics;
     if (!m || !m.hasData || (cid && m.cascadeId && m.cascadeId !== cid)) return null;
+    const key = `${m.cascadeId || ''}|${m.sig || ''}|${m.inlineHtml || ''}|${m.tooltipHtml || ''}`;
+    if (key === cachedSqlKey && cachedSqlResult) return cachedSqlResult;
     const inlineText = String(m.inlineHtml || '')
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
@@ -898,7 +1095,8 @@
     const genMatch = ttText.match(/Gen\s*#(\d+)/i);
     const turnStepsMatch = ttText.match(/本轮合计\s*\((\d+)步\)/);
     const totalTurnsMatch = ttText.match(/(\d+)\s*轮提问\s*\/\s*(\d+)\s*次有效调用/);
-    return {
+    cachedSqlKey = key;
+    cachedSqlResult = {
       sig: m.sig || '',
       inlineText,
       genNum: genMatch ? parseInt(genMatch[1], 10) : null,
@@ -906,34 +1104,167 @@
       userTurns: totalTurnsMatch ? parseInt(totalTurnsMatch[1], 10) : null,
       totalCalls: totalTurnsMatch ? parseInt(totalTurnsMatch[2], 10) : null
     };
+    return cachedSqlResult;
   }
 
-  // 扫描侧边栏后台并发运行中的其他会话
+  // 扫描侧边栏后台并发运行中的其他会话（直接查 spinner，O(活跃数) 而非遍历全部侧边栏行）
   function scanBackgroundConversations(currentCid) {
     const bg = [];
-    const rows = document.querySelectorAll('[data-testid="conversation-row-sidebar"]');
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      const hasSpinner = !!r.querySelector('[data-testid="status-loading-spinner"]');
-      if (!hasSpinner) continue;
+    let currentSidebarSpinning = false;
+    const spinners = document.querySelectorAll(
+      '[data-testid="conversation-row-sidebar"] [data-testid="status-loading-spinner"]'
+    );
+    for (let i = 0; i < spinners.length; i++) {
+      const r = spinners[i].closest('[data-testid="conversation-row-sidebar"]');
+      if (!r) continue;
       const rCid = r.getAttribute('data-cascade-id') || '';
       const isSelected = r.getAttribute('data-selected') === 'true' || (currentCid && rCid === currentCid);
-      if (!isSelected) {
+      if (isSelected) {
+        currentSidebarSpinning = true;
+      } else {
         const titleEl = r.querySelector('span.truncate') || r;
         const title = (titleEl.textContent || '').trim().split('\n')[0].trim() || '后台会话';
         bg.push({ cid: rCid, title, rowEl: r });
       }
     }
-    return bg;
+    return { bg, currentSidebarSpinning };
   }
 
   // ============================================================================
   // 2. 核心采样：融合主对话 DOM + Swarm 协同矩阵 + 子代理状态 + SQLite 遥测
   // ============================================================================
+  const RE_SWARM_MARKER =
+    /Open the Swarm UI|Checked\s*\|\s*swarm\s+status|Checked\s+swarm\s+status|Waiting for @mentions after #\d+|Read \d+ messages? from board/i;
+  const RE_WAITING_MENTIONS = /Waiting for @mentions after #(\d+)/i;
+  const RE_QUOTA_ERR =
+    /RESOURCE_EXHAUSTED|exhausted your capacity|quota exceeded|您已消耗全部.*额度|429 Too Many Requests/i;
+
+  const browserTabTitleCache = new WeakMap(); // tabBtn -> { domVersion, title }
+  const lastRespCache = new WeakMap(); // lastResp -> { domVersion, ... }
+  const viewTailCache = new WeakMap(); // view -> { domVersion, tailText, hasRetryBtn, tailErrorText }
+
+  function isSvgNode(el) {
+    return el.tagName === 'SVG' || el.tagName === 'svg';
+  }
+
+  function inspectLastResp(lastResp) {
+    if (!lastResp) {
+      return {
+        srWorking: false,
+        browserSubagentRowEl: null,
+        domHasSwarmMarker: false,
+        waitingAfterSeq: null,
+        activeStepRaw: '',
+        proseLen: 0,
+        lastRespHasProse: false,
+        wfSummary: '',
+        changedText: '',
+        embedCount: 0
+      };
+    }
+    const prev = lastRespCache.get(lastResp);
+    if (prev && prev.domVersion === domVersion) {
+      return prev;
+    }
+
+    const srHeading = lastResp.querySelector('h6.sr-only');
+    const srWorking = !!(srHeading && /working/i.test(srHeading.textContent || ''));
+    const browserSubagentRowEl = lastResp.querySelector('[data-testid="browser-subagent-row"]');
+
+    // 仅扫描尾部有限窗口（避免超长回复全量 textContent + 正则），且一旦本轮命中 Swarm 标记即记住
+    const tailWin = collectTailText(lastResp, prev && prev.domHasSwarmMarker ? 1600 : 4000);
+    const domHasSwarmMarker = !!(prev && prev.domHasSwarmMarker) || RE_SWARM_MARKER.test(tailWin);
+    const waitingMentionsMatch = tailWin.match(RE_WAITING_MENTIONS);
+    const waitingAfterSeq = waitingMentionsMatch ? parseInt(waitingMentionsMatch[1], 10) : null;
+
+    // 仅查询真正带闪烁动画的 .animate-shimmer-text
+    const shimmerEls = lastResp.querySelectorAll('.animate-shimmer-text');
+    let activeStepRaw = '';
+    for (let i = shimmerEls.length - 1; i >= 0; i--) {
+      if (shimmerEls[i].closest('[data-testid="idle-status-text"]')) continue;
+      const txt = (shimmerEls[i].textContent || '').replace(/\s+/g, ' ').trim();
+      if (txt && !RE_PURE_TIMER.test(txt)) {
+        activeStepRaw = txt;
+        break;
+      }
+    }
+
+    const proseEls = lastResp.querySelectorAll('.prose, .markdown');
+    const lastRespHasProse = proseEls.length > 0;
+    let proseLen = 0;
+    for (let i = 0; i < proseEls.length; i++) {
+      proseLen += (proseEls[i].textContent || '').trim().length;
+    }
+
+    const wfBtn = lastResp.querySelector('[data-testid="worked-for-collapsible"]');
+    const wfSummary = wfBtn ? (wfBtn.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    const changedCard = lastResp.querySelector('[data-testid="changed-files-card-header"], [data-testid="changed-files-card"]');
+    const changedText = changedCard ? (changedCard.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 42) : '';
+    const embedCount = lastResp.querySelectorAll('[data-testid="agent-embed"]').length;
+
+    const result = {
+      domVersion,
+      srWorking,
+      browserSubagentRowEl,
+      domHasSwarmMarker,
+      waitingAfterSeq,
+      activeStepRaw,
+      proseLen,
+      lastRespHasProse,
+      wfSummary,
+      changedText,
+      embedCount
+    };
+    lastRespCache.set(lastResp, result);
+    return result;
+  }
+
+  function inspectStoppedViewTail(view, lastResp) {
+    const prev = viewTailCache.get(view);
+    if (prev && prev.domVersion === domVersion) {
+      return prev;
+    }
+    const tailText = collectTailText(view, 1000);
+
+    let hasRetryBtn = false;
+    const checkButtons = (btnList) => {
+      for (let i = Math.max(0, btnList.length - 12); i < btnList.length; i++) {
+        const bt = (btnList[i].textContent || '').trim();
+        if (bt === '重试' || bt === 'Retry') return true;
+      }
+      return false;
+    };
+
+    if (lastResp) {
+      hasRetryBtn = checkButtons(lastResp.querySelectorAll('button'));
+      if (!hasRetryBtn) {
+        for (let sib = lastResp.nextElementSibling; sib && !hasRetryBtn; sib = sib.nextElementSibling) {
+          if (sib.tagName === 'BUTTON') {
+            const bt = (sib.textContent || '').trim();
+            if (bt === '重试' || bt === 'Retry') hasRetryBtn = true;
+          } else if (sib.querySelectorAll) {
+            hasRetryBtn = checkButtons(sib.querySelectorAll('button'));
+          }
+        }
+      }
+    } else {
+      hasRetryBtn = checkButtons(view.querySelectorAll('button'));
+    }
+
+    const errEls = view.querySelectorAll('[role="alert"], [data-testid*="error"], .text-destructive');
+    const tailErrorEl = errEls.length > 0 ? errEls[errEls.length - 1] : null;
+    const tailErrorText = tailErrorEl ? (tailErrorEl.textContent || '') : '';
+
+    const result = { domVersion, tailText, hasRetryBtn, tailErrorText };
+    viewTailCache.set(view, result);
+    return result;
+  }
+
   function sampleRealConversation() {
     const cid = getCascadeId();
     const view = document.querySelector('[data-testid="conversation-view"]');
-    const bgConvs = scanBackgroundConversations(cid);
+    const bgScan = scanBackgroundConversations(cid);
+    const bgConvs = bgScan.bg;
 
     if (!cid || !view) {
       return {
@@ -959,6 +1290,8 @@
             }))
           : [{ icon: '✨', spin: false, title: '当前无正在执行的会话任务', status: '空闲', right: '100%', color: '#10b981' }],
         idleSec: 0,
+        effectiveTimeout: cfg.timeoutSec,
+        effectiveLastActiveTs: Date.now(),
         activeActor: '',
         sqlInfo: null,
         bgConvs,
@@ -994,8 +1327,7 @@
     // 区分【主代理(Coordinator)自身运行态】与【子代理/Swarm 后台运行态】
     const inputBox = document.getElementById('antigravity.agentSidePanelInputBox');
     const cancelBtn = inputBox ? inputBox.querySelector('[data-testid="input-cancel-button"]') : null;
-    const selSidebar = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
-    const sidebarSpinning = !!(selSidebar && selSidebar.querySelector('[data-testid="status-loading-spinner"]'));
+    const sidebarSpinning = bgScan.currentSidebarSpinning;
 
     // 读取底部子代理与浏览器状态栏 [data-testid="idle-status-text"]（取末尾最新节点，兼容单智能体/子代理/定时器/浏览器）
     const idleStatusEls = view.querySelectorAll('[data-testid="idle-status-text"]');
@@ -1039,35 +1371,34 @@
       }
     }
 
-    // 采集右侧内置浏览器操控面板信号
+    // 采集右侧内置浏览器操控面板信号（零回流可见性判定 + 无克隆标题提取）
     const stopBtn = document.querySelector('[data-testid="webview-agent-cursor-stop-button"]');
-    const stopBtnRect = stopBtn ? stopBtn.getBoundingClientRect() : null;
-    const stopBtnVisible = !!(stopBtn && stopBtnRect && stopBtnRect.width > 0 && stopBtnRect.height > 0);
-    const cursorPillEl = document.querySelector('[data-testid="webview-agent-cursor-pill-label"]');
+    const stopBtnVisible = !!(stopBtn && isElementVisible(stopBtn));
+    const cursorPillEl = stopBtnVisible || isUsingBrowserStatus || hasBrowserFav
+      ? document.querySelector('[data-testid="webview-agent-cursor-pill-label"]')
+      : null;
     const cursorPillRaw = cursorPillEl ? (cursorPillEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
 
     const agentFavEl = document.querySelector('[data-testid="browser-tab-favicon-agent"]');
     const agentTabBtn = agentFavEl ? agentFavEl.closest('button, [role="tab"]') : null;
     let browserTabTitle = '';
     if (agentTabBtn) {
-      try {
-        const clone = agentTabBtn.cloneNode(true);
-        clone.querySelectorAll('style, script, svg').forEach((n) => n.remove());
-        browserTabTitle = (clone.textContent || '').replace(/\s+/g, ' ').trim();
-      } catch {}
+      const cachedTab = browserTabTitleCache.get(agentTabBtn);
+      if (cachedTab && cachedTab.domVersion === domVersion) {
+        browserTabTitle = cachedTab.title;
+      } else {
+        browserTabTitle = collectCleanText(agentTabBtn, isSvgNode, 80);
+        browserTabTitleCache.set(agentTabBtn, { domVersion, title: browserTabTitle });
+      }
     }
 
     const browserPane = document.querySelector('[data-testid="builtin-browser-pane"]');
-    const browserPaneRect = browserPane ? browserPane.getBoundingClientRect() : null;
-    const browserPaneVisible = !!(
-      browserPane &&
-      (browserPane.offsetParent !== null || (browserPaneRect && browserPaneRect.width > 0))
-    );
+    const browserPaneVisible = !!(browserPane && isElementVisible(browserPane));
     let rawBrowserUrl = '';
     let browserHost = '';
     if (browserPaneVisible) {
       const urlDisp = browserPane.querySelector('[data-testid="browser-url-display"]');
-      const urlInput = browserPane.querySelector('[data-testid="browser-url-input"]');
+      const urlInput = urlDisp ? null : browserPane.querySelector('[data-testid="browser-url-input"]');
       rawBrowserUrl = (
         (urlDisp ? urlDisp.textContent : '') ||
         (urlInput ? urlInput.value : '') ||
@@ -1087,25 +1418,20 @@
     const lastUserEl = userCount > 0 ? userMsgs[userCount - 1] : null;
     const lastUserText = extractCleanUserText(lastUserEl);
     const lastResp = agentResps.length > 0 ? agentResps[agentResps.length - 1] : null;
+    const respMeta = inspectLastResp(lastResp);
 
-    const srHeading = lastResp ? lastResp.querySelector('h6.sr-only') : null;
-    const srWorking = !!(srHeading && /working/i.test(srHeading.textContent || ''));
+    const srWorking = respMeta.srWorking;
 
     // 主对话自身是否在跑 (Coordinator Turn Active)
     const coordWorking = !!(cancelBtn || srWorking);
     const queuedCount = getQueuedMessagesCount();
-    const browserSubagentRowEl = lastResp ? lastResp.querySelector('[data-testid="browser-subagent-row"]') : null;
+    const browserSubagentRowEl = respMeta.browserSubagentRowEl;
     const hasBrowserRowInResp = !!browserSubagentRowEl;
     const hasBrowserStepInStore = store.steps.some((s) => s.kind === 'browser' || /^🌐/.test(s.title || ''));
 
-    // 检测 DOM 中是否包含 Swarm 协作特征（避免将单个普通子代理或浏览器子代理误识别为 Swarm）
-    const lastRespText = lastResp ? (lastResp.textContent || '') : '';
-    const domHasSwarmMarker =
-      /Open the Swarm UI|Checked\s*\|\s*swarm\s+status|Checked\s+swarm\s+status|Waiting for @mentions after #\d+|Read \d+ messages? from board/i.test(
-        lastRespText
-      );
-    const waitingMentionsMatch = lastRespText.match(/Waiting for @mentions after #(\d+)/i);
-    const waitingAfterSeq = waitingMentionsMatch ? parseInt(waitingMentionsMatch[1], 10) : null;
+    // 检测 DOM 中是否包含 Swarm 协作特征（增量缓存，避免全量扫长回复）
+    const domHasSwarmMarker = respMeta.domHasSwarmMarker;
+    const waitingAfterSeq = respMeta.waitingAfterSeq;
 
     // Swarm 成员实时健康度与死锁深度分析（排除 monitor/narrator 系统哨兵干扰）
     const swarmHealth = analyzeSwarmHealth(swarmSnap, now, cfg.timeoutSec);
@@ -1146,6 +1472,7 @@
     // SQLite 信号同步
     const sqlInfo = parseSqlMetrics(cid);
     let genuineActivity = false;
+    let shouldImmediatePersist = false;
     if (sqlInfo && sqlInfo.sig && sqlInfo.sig !== store.lastDbSig) {
       if (store.lastDbSig !== '') genuineActivity = true;
       store.lastDbSig = sqlInfo.sig;
@@ -1190,23 +1517,15 @@
       }
       store.steps = [];
       genuineActivity = true;
+      shouldImmediatePersist = true;
     }
 
     // 异常中断错误信息
     let interruptedError = '';
 
     if (lastResp) {
-      // 关键修复：仅查询真正带闪烁动画的 .animate-shimmer-text，绝不把已结束的静态 [data-testid="tool-group-collapsible"] ("已探索") 当作进行中步骤！
-      const shimmerEls = lastResp.querySelectorAll('.animate-shimmer-text');
-      let activeStepRaw = '';
-      for (let i = shimmerEls.length - 1; i >= 0; i--) {
-        if (shimmerEls[i].closest('[data-testid="idle-status-text"]')) continue;
-        const txt = (shimmerEls[i].textContent || '').replace(/\s+/g, ' ').trim();
-        if (txt && !RE_PURE_TIMER.test(txt)) {
-          activeStepRaw = txt;
-          break;
-        }
-      }
+      // 复用 inspectLastResp 增量缓存的 shimmer 文本与正文长度
+      const activeStepRaw = respMeta.activeStepRaw;
 
       if (/等待您的批准|Waiting for your approval/i.test(activeStepRaw)) {
         waitingApproval = true;
@@ -1263,11 +1582,7 @@
       }
 
       // 监控流式正文输出变化
-      const proseEls = lastResp.querySelectorAll('.prose, .markdown');
-      let proseLen = 0;
-      for (let i = 0; i < proseEls.length; i++) {
-        proseLen += (proseEls[i].textContent || '').trim().length;
-      }
+      const proseLen = respMeta.proseLen;
       if (proseLen !== store.lastProseLen) {
         if (proseLen > store.lastProseLen && coordWorking) {
           genuineActivity = true;
@@ -1467,29 +1782,15 @@
       store.lastIdleStatusSig = '';
     }
 
-    // 检查异常断流、配额受限或服务重启导致的子代理强行中断
-    const tailText = (view.textContent || '').slice(-900);
-    let hasRetryBtn = false;
-    if (!isRunning) {
-      const retryBtns = view.querySelectorAll('button');
-      for (let i = Math.max(0, retryBtns.length - 12); i < retryBtns.length; i++) {
-        const bt = (retryBtns[i].textContent || '').trim();
-        if (bt === '重试' || bt === 'Retry') {
-          hasRetryBtn = true;
-          break;
-        }
-      }
-    }
-
-    const RE_QUOTA_ERR =
-      /RESOURCE_EXHAUSTED|exhausted your capacity|quota exceeded|您已消耗全部.*额度|429 Too Many Requests/i;
+    // 检查异常断流、配额受限或服务重启导致的子代理强行中断（运行态跳过尾部文本与按钮扫描；停止态按 domVersion 增量缓存）
     const notifCard = document.querySelector('[data-testid="input-box-notification-card"]');
     const notifText = notifCard && isElementVisible(notifCard) ? (notifCard.textContent || '') : '';
-    const tailErrorEl = !isRunning
-      ? Array.from(view.querySelectorAll('[role="alert"], [data-testid*="error"], .text-destructive')).pop()
-      : null;
-    const tailErrorText = tailErrorEl ? (tailErrorEl.textContent || '') : '';
-    const lastRespHasProse = !!(lastResp && lastResp.querySelector('.prose, .markdown'));
+    const stoppedTail = !isRunning ? inspectStoppedViewTail(view, lastResp) : null;
+    const tailText = stoppedTail ? stoppedTail.tailText : '';
+    const hasRetryBtn = stoppedTail ? stoppedTail.hasRetryBtn : false;
+    const tailErrorText = stoppedTail ? stoppedTail.tailErrorText : '';
+    const lastRespHasProse = respMeta.lastRespHasProse;
+
     const quotaBlocked = !!(
       swarmHealth.coordQuotaBlocked ||
       RE_QUOTA_ERR.test(notifText) ||
@@ -1517,6 +1818,7 @@
       store.wasRunning = true;
       store.lastActiveTs = now;
       genuineActivity = true;
+      shouldImmediatePersist = true;
     } else if (!isRunning && store.wasRunning) {
       store.wasRunning = false;
       store.lastActiveTs = now;
@@ -1527,6 +1829,7 @@
         }
       }
       genuineActivity = true;
+      shouldImmediatePersist = true;
     }
 
     // 实质进展评估：一旦上次催促后产生实质推进，立刻清零连续无进展计数 noEffectStreak
@@ -1571,12 +1874,13 @@
         store.noEffectStreak = 0;
         store.healBaselineSig = '';
         genuineActivity = true;
+        shouldImmediatePersist = true;
       }
     }
 
     if (genuineActivity) {
       store.lastActiveTs = now;
-      persistTurnStore(store);
+      persistTurnStore(store, shouldImmediatePersist);
     }
 
     if (waitingApproval) {
@@ -1885,6 +2189,8 @@
         stageHeader,
         rows: swarmRows,
         idleSec,
+        effectiveTimeout,
+        effectiveLastActiveTs,
         activeActor: latestActiveMember,
         sqlInfo,
         bgConvs,
@@ -1905,13 +2211,11 @@
     }
 
     // ==========================================================================
-    // 4. 分支渲染 B：常规单智能体对话模式
+    // 4. 分支渲染 B：常规单智能体对话模式（直接复用 inspectLastResp 缓存结果）
     // ==========================================================================
-    const wfBtn = lastResp ? lastResp.querySelector('[data-testid="worked-for-collapsible"]') : null;
-    const wfSummary = wfBtn ? (wfBtn.textContent || '').replace(/\s+/g, ' ').trim() : '';
-    const changedCard = lastResp ? lastResp.querySelector('[data-testid="changed-files-card-header"], [data-testid="changed-files-card"]') : null;
-    const changedText = changedCard ? (changedCard.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 42) : '';
-    const embedCount = lastResp ? lastResp.querySelectorAll('[data-testid="agent-embed"]').length : 0;
+    const wfSummary = respMeta.wfSummary;
+    const changedText = respMeta.changedText;
+    const embedCount = respMeta.embedCount;
 
     let displayRows = [];
     if (store.steps.length > 0) {
@@ -2108,6 +2412,8 @@
       stageHeader,
       rows: displayRows,
       idleSec,
+      effectiveTimeout,
+      effectiveLastActiveTs,
       activeActor: '',
       sqlInfo,
       bgConvs,
@@ -2217,8 +2523,7 @@
 
     if (reason === 'manual') {
       const stopBtn = document.querySelector('[data-testid="webview-agent-cursor-stop-button"]');
-      const stopRect = stopBtn ? stopBtn.getBoundingClientRect() : null;
-      if (stopBtn && stopRect && stopRect.width > 0 && stopRect.height > 0) {
+      if (stopBtn && isElementVisible(stopBtn)) {
         stopBtn.click();
         setTimeout(sendPromptText, 900);
         return true;
@@ -2266,8 +2571,9 @@
 
   const pill = document.createElement('div');
   pill.id = 'ag-watchdog-dock-pill';
+  if (cfg.blur) pill.classList.add('ag-wd-blur-on');
   pill.innerHTML = `
-    <span id="ag-wd-pill-dot" class="ag-wd-dot-pulse" style="width:8px;height:8px;border-radius:50%;background:#00d2ff;color:#00d2ff;"></span>
+    <span id="ag-wd-pill-dot" style="width:8px;height:8px;border-radius:50%;"></span>
     <span id="ag-wd-pill-txt" class="ag-wd-mono" style="color:#e2e8f0;">100% 完成了么</span>
     <span style="font-size:9px;opacity:0.65;margin-left:1px;">▾</span>
   `;
@@ -2275,6 +2581,7 @@
 
   const hud = document.createElement('div');
   hud.id = 'ag-watchdog-hud';
+  if (cfg.blur) hud.classList.add('ag-wd-blur-on');
 
   function applyAnchorStyles(el) {
     if (!el) return;
@@ -2330,8 +2637,7 @@
         <div style="position:relative;width:48px;height:48px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
           <svg style="width:100%;height:100%;transform:rotate(-90deg);" viewBox="0 0 36 36">
             <path stroke="#1e293b" stroke-width="3.4" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
-            <path id="ag-wd-ring" stroke="#00d2ff" stroke-width="3.6" stroke-linecap="round" fill="none" stroke-dasharray="100, 100"
-              style="transition:stroke-dasharray 0.35s ease, stroke 0.25s ease;"
+            <path id="ag-wd-ring" stroke-width="3.6" stroke-linecap="round" fill="none" stroke-dasharray="100, 100"
               d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
           </svg>
           <span id="ag-wd-ring-txt" class="ag-wd-mono" style="position:absolute;font-size:11px;font-weight:700;color:#ffffff;">100%</span>
@@ -2339,8 +2645,8 @@
 
         <div style="min-width:0;flex:1;">
           <div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;">
-            <span id="ag-wd-badge" style="display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:9999px;font-size:11px;font-weight:600;background:rgba(8,47,73,0.9);color:#38bdf8;border:1px solid rgba(56,189,248,0.4);">
-              <span id="ag-wd-badge-dot" class="ag-wd-dot-pulse" style="width:6px;height:6px;border-radius:50%;background:#38bdf8;color:#38bdf8;"></span>
+            <span id="ag-wd-badge" style="display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:9999px;font-size:11px;font-weight:600;">
+              <span id="ag-wd-badge-dot" style="width:6px;height:6px;border-radius:50%;"></span>
               <span id="ag-wd-badge-txt">同步中</span>
             </span>
             <span style="font-size:14px;font-weight:700;color:#ffffff;letter-spacing:0.3px;">完成了么</span>
@@ -2359,7 +2665,7 @@
     </div>
 
     <div id="ag-wd-bar-track" style="width:100%;height:4px;background:#1e293b;border-radius:9999px;margin-top:10px;overflow:hidden;">
-      <div id="ag-wd-bar" style="width:100%;height:100%;background:linear-gradient(90deg,#00d2ff,#38bdf8);border-radius:9999px;transition:width 0.35s ease, background 0.25s ease;"></div>
+      <div id="ag-wd-bar" style="width:100%;height:100%;border-radius:9999px;transition:width 0.3s ease;"></div>
     </div>
 
     <div id="ag-wd-body" style="margin-top:10px;padding-top:9px;border-top:1px solid rgba(51,65,85,0.55);display:${cfg.collapsed ? 'none' : 'block'};">
@@ -2394,32 +2700,62 @@
   document.body.appendChild(pill);
   document.body.appendChild(hud);
 
+  let reopenBtnEl = null;
+  let domObs = null;
+  let domObsActive = false;
+
+  function syncObserverState() {
+    if (!domObs || !document.body) return;
+    const shouldObserve = !cfg.hidden || !!cfg.autoHeal;
+    if (shouldObserve && !domObsActive) {
+      domObs.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      });
+      domObsActive = true;
+    } else if (!shouldObserve && domObsActive) {
+      try {
+        domObs.disconnect();
+      } catch {}
+      domObsActive = false;
+    }
+  }
+
+  // 仅在按钮未挂载或未连接时操作 DOM，避免每次 renderSnapshot 反复查询 toolbar
   function ensureReopenToolbarBtn() {
-    let btn = document.getElementById('ag-watchdog-reopen-btn');
-    const toolbar = document.querySelector('[data-testid="pane-titlebar-toolbar"]');
     if (!cfg.hidden) {
-      if (btn) btn.remove();
+      if (reopenBtnEl) {
+        try {
+          reopenBtnEl.remove();
+        } catch {}
+        reopenBtnEl = null;
+      }
       return;
     }
+    if (reopenBtnEl && reopenBtnEl.isConnected) return;
+    const toolbar = document.querySelector('[data-testid="pane-titlebar-toolbar"]');
     if (!toolbar) return;
-    if (!btn) {
-      btn = document.createElement('button');
+    if (!reopenBtnEl) {
+      const btn = document.createElement('button');
       btn.id = 'ag-watchdog-reopen-btn';
       btn.type = 'button';
       btn.title = '打开「完成了么」实时会话监控 (⌥+W)';
       btn.textContent = '⚡ 监控';
       btn.style.cssText =
-        'height:24px;padding:0 8px;margin-right:4px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(56,189,248,0.45);background:rgba(11,19,32,0.88);color:#38bdf8;display:inline-flex;align-items:center;gap:4px;';
+        'height:24px;padding:0 8px;margin-right:4px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(56,189,248,0.45);background:rgba(11,19,32,0.92);color:#38bdf8;display:inline-flex;align-items:center;gap:4px;';
       btn.addEventListener('click', () => {
         cfg.hidden = false;
         cfg.minimized = false;
         saveJson(localStorage, STORAGE_CFG_KEY, cfg);
+        domVersion++;
         syncVisibility();
         renderSnapshot();
       });
+      reopenBtnEl = btn;
     }
-    if (btn.parentElement !== toolbar) {
-      toolbar.insertBefore(btn, toolbar.firstChild);
+    if (reopenBtnEl.parentElement !== toolbar) {
+      toolbar.insertBefore(reopenBtnEl, toolbar.firstChild);
     }
   }
 
@@ -2427,16 +2763,15 @@
     if (cfg.hidden) {
       hud.style.display = 'none';
       pill.style.display = 'none';
-      ensureReopenToolbarBtn();
     } else if (cfg.minimized) {
       hud.style.display = 'none';
       pill.style.display = 'inline-flex';
-      ensureReopenToolbarBtn();
     } else {
       hud.style.display = 'block';
       pill.style.display = 'none';
-      ensureReopenToolbarBtn();
     }
+    ensureReopenToolbarBtn();
+    syncObserverState();
     applyPositionAndClamp();
     requestAnimationFrame(applyPositionAndClamp);
   }
@@ -2468,21 +2803,168 @@
   const elPillDot = document.getElementById('ag-wd-pill-dot');
   const elPillTxt = document.getElementById('ag-wd-pill-txt');
 
-  let lastBgHtml = '';
-  let lastRowsHtml = '';
   let latestKickPrompt = '';
+  let lastSnap = null;
+  let lastSampledTs = 0;
+  let lastSampledDomVersion = -1;
+  let lastSampledUrl = '';
+  let lastRemainCooldown = 0;
+
+  // 视觉状态 Diff 缓存：仅在值实际变化时触碰对应 DOM 属性、样式与类名
+  const lastRenderState = {
+    hudStateClass: null,
+    pillStateClass: null,
+    hudCollapsed: null,
+    hudAnimated: null,
+    pillAnimated: null,
+    pct: null,
+    badgeTxt: null,
+    pillTxt: null,
+    subtitle: null,
+    stageHdr: null,
+    srcTag: null,
+    swarmBtnDisp: 'none',
+    browserBtnDisp: 'none',
+    wakeIsUrgent: false,
+    wakeTxt: null,
+    rowsHtml: '',
+    bgDisp: 'none',
+    bgHtml: '',
+    hbColor: null,
+    hbTxt: null,
+    sqlTxt: ''
+  };
+
+  function getCurrentUrlSig() {
+    try {
+      return (window.location.pathname || '') + (window.location.search || '');
+    } catch {
+      return '';
+    }
+  }
+
+  function mapStateKindToClass(stateKind) {
+    if (stateKind === 'stalled') return 'is-stalled';
+    if (stateKind === 'quota') return 'is-quota';
+    if (stateKind === 'approval') return 'is-approval';
+    if (stateKind === 'swarm') return 'is-swarm';
+    if (stateKind === 'browser') return 'is-browser';
+    if (stateKind === 'running') return '';
+    return 'is-done';
+  }
+
+  function computeHeartbeatDisplay(snap, idleSec, remainCooldown) {
+    if (snap.stateKind === 'stalled') {
+      return {
+        color: '#f87171',
+        text:
+          autoHealCountdown > 0
+            ? `⚠️ 停滞! ${autoHealCountdown}s 后自动${snap.isSwarm ? '踢起唤醒' : '唤醒'}…`
+            : cfg.autoHeal && remainCooldown > 0 && snap.store
+              ? `⏳ 第 ${snap.store.totalAutoHeals || 1} 次催促已发出，${remainCooldown}s 后若仍无进展将继续自动催促…`
+              : snap.interruptedError
+                ? `⚠️ ${snap.interruptedError}`
+                : snap.isStalled && snap.isSubagentOnlyRunning && !snap.isSwarm
+                  ? `⚠️ 子代理已 ${idleSec}s 无新进展 (防插队未自动发送，可手动停止重调)`
+                  : snap.isSwarm
+                    ? `⚠️ ${String(snap.subtitle || '').replace(/^⚠️\s*/, '')}`
+                    : `⚠️ 已 ${idleSec}s 无进展输出`
+      };
+    }
+    if (snap.stateKind === 'quota') {
+      return {
+        color: '#fb923c',
+        text:
+          cfg.autoHeal && remainCooldown > 0 && snap.store
+            ? `⏳ 第 ${snap.store.totalAutoHeals || 1} 次催促已发出，${remainCooldown}s 后若仍无进展将继续自动催促…`
+            : '🚫 模型配额或限流受限 (已切换 300s 慢速探活)'
+      };
+    }
+    if (snap.stateKind === 'approval') {
+      return {
+        color: '#fbbf24',
+        text:
+          snap.userGateKind === 'question'
+            ? '⏸ 等待您在输入框上方完成选择题 / 问答'
+            : '⏸ 等待人工审批授权操作'
+      };
+    }
+    if (snap.stateKind === 'browser') {
+      const hostSuffix = snap.browserHost ? ` · ${snap.browserHost}` : '';
+      return {
+        color: idleSec > cfg.timeoutSec * 0.65 ? '#fbbf24' : '#22d3ee',
+        text:
+          idleSec <= 2
+            ? `● 浏览器心跳: 实时操控中${hostSuffix}`
+            : `● 浏览器心跳: ${idleSec}s 前动作${hostSuffix}`
+      };
+    }
+    if (snap.stateKind === 'swarm' || snap.stateKind === 'running') {
+      const actorSuffix = snap.isSwarm && snap.activeActor ? ` (${snap.activeActor})` : '';
+      return {
+        color: idleSec > cfg.timeoutSec * 0.65 ? '#fbbf24' : '#10b981',
+        text:
+          idleSec <= 2
+            ? `● ${snap.isSwarm ? 'Swarm 心跳' : '心跳'}: 实时活跃中${actorSuffix}`
+            : `● ${snap.isSwarm ? 'Swarm 心跳' : '心跳'}: ${idleSec}s 前活跃${actorSuffix}`
+      };
+    }
+    return {
+      color: '#34d399',
+      text: snap.isSwarm ? '● Swarm 心跳: 矩阵就绪 (全员待命)' : '● 心跳: 会话就绪 (等待指令)'
+    };
+  }
+
+  function buildRowsHtml(rows) {
+    let out = '';
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      out += `
+      <div data-jump-cid="${escHtml(r.jumpCid || '')}" data-open-swarm="${r.openSwarm ? '1' : ''}" data-focus-gate="${r.focusGate ? '1' : ''}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:rgba(15,23,42,0.72);border:1px solid ${r.spin ? 'rgba(56,189,248,0.42)' : 'rgba(30,41,59,0.75)'};${r.jumpCid || r.openSwarm || r.focusGate ? 'cursor:pointer;' : ''}">
+        <div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
+          <span class="${r.spin ? 'ag-wd-spin' : ''}" style="font-size:12px;flex-shrink:0;">${r.icon}</span>
+          <span class="ag-wd-mono" title="${escHtml(r.title)}" style="font-size:11px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.title)}</span>
+        </div>
+        <div class="ag-wd-mono" style="display:flex;align-items:center;gap:8px;flex-shrink:0;font-size:11px;">
+          <span style="color:#94a3b8;">${escHtml(r.status)}</span>
+          <span style="color:${r.color};font-weight:700;">${escHtml(r.right)}</span>
+        </div>
+      </div>`;
+    }
+    return out;
+  }
+
+  function applyPillDiff(nextStateClass, isAnimatedState, pct, stateLabel) {
+    if (nextStateClass !== lastRenderState.pillStateClass) {
+      if (lastRenderState.pillStateClass) pill.classList.remove(lastRenderState.pillStateClass);
+      if (nextStateClass) pill.classList.add(nextStateClass);
+      lastRenderState.pillStateClass = nextStateClass;
+    }
+    if (isAnimatedState !== lastRenderState.pillAnimated) {
+      elPillDot.classList.toggle('ag-wd-dot-pulse', isAnimatedState);
+      lastRenderState.pillAnimated = isAnimatedState;
+    }
+    const nextPillTxt = `${pct}% · ${stateLabel}`;
+    if (nextPillTxt !== lastRenderState.pillTxt) {
+      elPillTxt.textContent = nextPillTxt;
+      lastRenderState.pillTxt = nextPillTxt;
+    }
+  }
 
   function renderSnapshot() {
-    const snap = sampleRealConversation();
-    latestKickPrompt = snap.kickPrompt || '';
+    // 彻底隐藏且未启用自愈时，完全跳过页面采样，仅按需保底挂载顶栏重开按钮
+    if (cfg.hidden && !cfg.autoHeal) {
+      ensureReopenToolbarBtn();
+      return;
+    }
 
-    // 控制 Swarm / 浏览器快捷按钮显示
-    if (elSwarmBtn) {
-      elSwarmBtn.style.display = snap.isSwarm ? 'inline-block' : 'none';
-    }
-    if (elBrowserBtn) {
-      elBrowserBtn.style.display = snap.isBrowser || snap.hasAgentBrowserTab ? 'inline-block' : 'none';
-    }
+    const now = Date.now();
+    const snap = sampleRealConversation();
+    lastSnap = snap;
+    lastSampledTs = now;
+    lastSampledDomVersion = domVersion;
+    lastSampledUrl = getCurrentUrlSig();
+    latestKickPrompt = snap.kickPrompt || '';
 
     // 自适应退避自愈调度（有实质进展自动清零无进展计数；Swarm 死锁停滞直接放行踢起；无进展退避持续探活）
     const cooldownSec = snap.quotaBlocked
@@ -2498,9 +2980,10 @@
         : 0;
     const sinceLastHealSec =
       snap.store && snap.store.lastAutoHealSentTs > 0
-        ? Math.max(0, Math.floor((Date.now() - snap.store.lastAutoHealSentTs) / 1000))
+        ? Math.max(0, Math.floor((now - snap.store.lastAutoHealSentTs) / 1000))
         : Infinity;
     const remainCooldown = cooldownSec > sinceLastHealSec ? cooldownSec - sinceLastHealSec : 0;
+    lastRemainCooldown = remainCooldown;
 
     const canHealThisState =
       !!snap.interruptedError ||
@@ -2526,7 +3009,7 @@
           snap.store.totalAutoHeals = (snap.store.totalAutoHeals || 0) + 1;
           snap.store.lastAutoHealSentTs = Date.now();
           snap.store.lastActiveTs = Date.now();
-          persistTurnStore(snap.store);
+          persistTurnStore(snap.store, true);
           triggerRealWakeup('auto', snap.kickPrompt || '');
         }
       } else {
@@ -2537,7 +3020,7 @@
           snap.store.totalAutoHeals = (snap.store.totalAutoHeals || 0) + 1;
           snap.store.lastAutoHealSentTs = Date.now();
           snap.store.lastActiveTs = Date.now();
-          persistTurnStore(snap.store);
+          persistTurnStore(snap.store, true);
           triggerRealWakeup('auto', snap.kickPrompt || '');
         }
       }
@@ -2545,206 +3028,231 @@
       autoHealCountdown = 0;
     }
 
-    // 环形进度与颜色主题
+    // 隐藏态跳过所有 HUD / Pill DOM 写入，仅按需确保重开按钮存在
+    if (cfg.hidden) {
+      ensureReopenToolbarBtn();
+      return;
+    }
+
     const pct = Math.max(0, Math.min(100, Math.round(snap.progress)));
-    elRing.setAttribute('stroke-dasharray', `${pct}, 100`);
-    elRingTxt.textContent = `${pct}%`;
-    elBar.style.width = `${pct}%`;
+    const nextStateClass = mapStateKindToClass(snap.stateKind);
+    const isAnimatedState =
+      snap.stateKind === 'running' ||
+      snap.stateKind === 'swarm' ||
+      snap.stateKind === 'browser' ||
+      snap.stateKind === 'approval' ||
+      snap.stateKind === 'stalled';
 
-    hud.classList.remove('is-stalled', 'is-done', 'is-approval', 'is-swarm', 'is-browser', 'is-quota');
-    pill.classList.remove('is-stalled', 'is-done', 'is-approval', 'is-swarm', 'is-browser', 'is-quota');
-    hud.classList.toggle('is-collapsed', !!cfg.collapsed);
+    // 最小化胶囊态：只 Diff 更新 Pill 自身，完全跳过不可见的完整 HUD 面板 DOM 更新
+    if (cfg.minimized) {
+      applyPillDiff(nextStateClass, isAnimatedState, pct, snap.stateLabel);
+      return;
+    }
 
-    const isAnimatedState = ['running', 'swarm', 'browser', 'approval', 'stalled'].includes(snap.stateKind);
-    elBadgeDot.classList.toggle('ag-wd-dot-pulse', isAnimatedState);
-    elPillDot.classList.toggle('ag-wd-dot-pulse', isAnimatedState);
+    // 完整 HUD 展开态：全字段状态 Diff，无变化不触碰 DOM
+    if (pct !== lastRenderState.pct) {
+      elRing.setAttribute('stroke-dasharray', `${pct}, 100`);
+      elRingTxt.textContent = `${pct}%`;
+      elBar.style.width = `${pct}%`;
+      lastRenderState.pct = pct;
+    }
 
-    let themeColor = '#00d2ff';
+    if (nextStateClass !== lastRenderState.hudStateClass) {
+      if (lastRenderState.hudStateClass) hud.classList.remove(lastRenderState.hudStateClass);
+      if (nextStateClass) hud.classList.add(nextStateClass);
+      lastRenderState.hudStateClass = nextStateClass;
+    }
+
+    const isCollapsed = !!cfg.collapsed;
+    if (isCollapsed !== lastRenderState.hudCollapsed) {
+      hud.classList.toggle('is-collapsed', isCollapsed);
+      lastRenderState.hudCollapsed = isCollapsed;
+    }
+
+    if (isAnimatedState !== lastRenderState.hudAnimated) {
+      elBadgeDot.classList.toggle('ag-wd-dot-pulse', isAnimatedState);
+      lastRenderState.hudAnimated = isAnimatedState;
+    }
+
+    if (snap.stateLabel !== lastRenderState.badgeTxt) {
+      elBadgeTxt.textContent = snap.stateLabel;
+      lastRenderState.badgeTxt = snap.stateLabel;
+    }
+
+    if (snap.subtitle !== lastRenderState.subtitle) {
+      elSubtitle.textContent = snap.subtitle;
+      elSubtitle.title = snap.subtitle;
+      lastRenderState.subtitle = snap.subtitle;
+    }
+
+    // 折叠态时，主体区域 display:none，跳过明细列表与底栏 DOM 写入
+    if (isCollapsed) {
+      return;
+    }
+
+    if (elSwarmBtn) {
+      const nextSwarmDisp = snap.isSwarm ? 'inline-block' : 'none';
+      if (nextSwarmDisp !== lastRenderState.swarmBtnDisp) {
+        elSwarmBtn.style.display = nextSwarmDisp;
+        lastRenderState.swarmBtnDisp = nextSwarmDisp;
+      }
+    }
+    if (elBrowserBtn) {
+      const nextBrowserDisp = snap.isBrowser || snap.hasAgentBrowserTab ? 'inline-block' : 'none';
+      if (nextBrowserDisp !== lastRenderState.browserBtnDisp) {
+        elBrowserBtn.style.display = nextBrowserDisp;
+        lastRenderState.browserBtnDisp = nextBrowserDisp;
+      }
+    }
+
+    let nextWakeUrgent = false;
+    let nextWakeTxt = '⚡ 发送继续';
     if (snap.stateKind === 'stalled') {
-      themeColor = '#ef4444';
-      hud.classList.add('is-stalled');
-      pill.classList.add('is-stalled');
-      elBadge.style.background = 'rgba(69, 10, 10, 0.92)';
-      elBadge.style.borderColor = 'rgba(248, 113, 113, 0.65)';
-      elBadge.style.color = '#fca5a5';
-      elWakeBtn.classList.add('is-wake');
-      elWakeBtn.textContent =
+      nextWakeUrgent = true;
+      nextWakeTxt =
         autoHealCountdown > 0
           ? `⚡ ${autoHealCountdown}s 自愈中 (点此立即唤醒)`
           : snap.isSwarm
             ? '⚡ 立即踢起节点'
             : '⚡ 立即唤醒重调';
     } else if (snap.stateKind === 'quota') {
-      themeColor = '#f97316';
-      hud.classList.add('is-quota');
-      pill.classList.add('is-quota');
-      elBadge.style.background = 'rgba(67, 20, 7, 0.9)';
-      elBadge.style.borderColor = 'rgba(249, 115, 22, 0.6)';
-      elBadge.style.color = '#fdba74';
-      elWakeBtn.classList.remove('is-wake');
-      elWakeBtn.textContent = remainCooldown > 0 && cfg.autoHeal ? `⚡ ${remainCooldown}s 后探活` : '⚡ 立即探活';
+      nextWakeTxt = remainCooldown > 0 && cfg.autoHeal ? `⚡ ${remainCooldown}s 后探活` : '⚡ 立即探活';
     } else if (snap.stateKind === 'approval') {
-      themeColor = '#f59e0b';
-      hud.classList.add('is-approval');
-      pill.classList.add('is-approval');
-      elBadge.style.background = 'rgba(69, 26, 3, 0.9)';
-      elBadge.style.borderColor = 'rgba(245, 158, 11, 0.6)';
-      elBadge.style.color = '#fcd34d';
-      elWakeBtn.classList.remove('is-wake');
-      elWakeBtn.textContent = snap.userGateKind === 'question' ? '💬 去答题' : '⏸ 去审批';
+      nextWakeTxt = snap.userGateKind === 'question' ? '💬 去答题' : '⏸ 去审批';
     } else if (snap.stateKind === 'swarm') {
-      themeColor = '#818cf8';
-      hud.classList.add('is-swarm');
-      pill.classList.add('is-swarm');
-      elBadge.style.background = 'rgba(49, 46, 129, 0.88)';
-      elBadge.style.borderColor = 'rgba(129, 140, 248, 0.55)';
-      elBadge.style.color = '#c7d2fe';
-      elWakeBtn.classList.remove('is-wake');
-      elWakeBtn.textContent = '⚡ 唤醒主代理';
+      nextWakeTxt = '⚡ 唤醒主代理';
     } else if (snap.stateKind === 'browser') {
-      themeColor = '#22d3ee';
-      hud.classList.add('is-browser');
-      pill.classList.add('is-browser');
-      elBadge.style.background = 'rgba(8, 51, 68, 0.9)';
-      elBadge.style.borderColor = 'rgba(34, 211, 238, 0.55)';
-      elBadge.style.color = '#67e8f9';
-      elWakeBtn.classList.remove('is-wake');
-      elWakeBtn.textContent = '⚡ 停止并重调';
+      nextWakeTxt = '⚡ 停止并重调';
     } else if (snap.stateKind === 'running') {
-      themeColor = '#00d2ff';
-      elBadge.style.background = 'rgba(8, 47, 73, 0.9)';
-      elBadge.style.borderColor = 'rgba(56, 189, 248, 0.45)';
-      elBadge.style.color = '#38bdf8';
-      elWakeBtn.classList.remove('is-wake');
-      elWakeBtn.textContent = '⚡ 强制重调';
-    } else {
-      themeColor = '#10b981';
-      hud.classList.add('is-done');
-      pill.classList.add('is-done');
-      elBadge.style.background = 'rgba(6, 78, 59, 0.88)';
-      elBadge.style.borderColor = 'rgba(16, 185, 129, 0.48)';
-      elBadge.style.color = '#6ee7b7';
-      elWakeBtn.classList.remove('is-wake');
-      elWakeBtn.textContent = '⚡ 发送继续';
+      nextWakeTxt = '⚡ 强制重调';
     }
 
-    elRing.setAttribute('stroke', themeColor);
-    elBar.style.background =
-      snap.stateKind === 'swarm'
-        ? 'linear-gradient(90deg, #38bdf8, #818cf8)'
-        : snap.stateKind === 'browser'
-          ? 'linear-gradient(90deg, #06b6d4, #2dd4bf)'
-          : snap.stateKind === 'running'
-            ? 'linear-gradient(90deg, #00d2ff, #38bdf8)'
-            : themeColor;
-    elBadgeDot.style.background = themeColor;
-    elBadgeDot.style.color = themeColor;
-    elBadgeTxt.textContent = snap.stateLabel;
+    if (nextWakeUrgent !== lastRenderState.wakeIsUrgent) {
+      elWakeBtn.classList.toggle('is-wake', nextWakeUrgent);
+      lastRenderState.wakeIsUrgent = nextWakeUrgent;
+    }
+    if (nextWakeTxt !== lastRenderState.wakeTxt) {
+      elWakeBtn.textContent = nextWakeTxt;
+      lastRenderState.wakeTxt = nextWakeTxt;
+    }
 
-    elPillDot.style.background = themeColor;
-    elPillDot.style.color = themeColor;
-    elPillTxt.textContent = `${pct}% · ${snap.stateLabel}`;
-
-    elSubtitle.textContent = snap.subtitle;
-    elSubtitle.title = snap.subtitle;
-    elStageHdr.textContent = snap.stageHeader;
-    elSrcTag.textContent = snap.sourceTag;
-    elSrcTag.title = '数据源: ' + snap.sourceTag;
+    if (snap.stageHeader !== lastRenderState.stageHdr) {
+      elStageHdr.textContent = snap.stageHeader;
+      lastRenderState.stageHdr = snap.stageHeader;
+    }
+    if (snap.sourceTag !== lastRenderState.srcTag) {
+      elSrcTag.textContent = snap.sourceTag;
+      elSrcTag.title = '数据源: ' + snap.sourceTag;
+      lastRenderState.srcTag = snap.sourceTag;
+    }
 
     // 渲染真实步骤或 Swarm 节点矩阵列表（仅当 HTML 变化时更新 DOM）
-    const nextRowsHtml = snap.rows
-      .map(
-        (r) => `
-      <div data-jump-cid="${escHtml(r.jumpCid || '')}" data-open-swarm="${r.openSwarm ? '1' : ''}" data-focus-gate="${r.focusGate ? '1' : ''}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:rgba(15,23,42,0.72);border:1px solid ${r.spin ? 'rgba(56,189,248,0.42)' : 'rgba(30,41,59,0.75)'};${r.jumpCid || r.openSwarm || r.focusGate ? 'cursor:pointer;' : ''}">
-        <div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
-          <span class="${r.spin ? 'ag-wd-spin' : ''}" style="font-size:12px;flex-shrink:0;">${r.icon}</span>
-          <span class="ag-wd-mono" title="${escHtml(r.title)}" style="font-size:11px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.title)}</span>
-        </div>
-        <div class="ag-wd-mono" style="display:flex;align-items:center;gap:8px;flex-shrink:0;font-size:11px;">
-          <span style="color:#94a3b8;">${escHtml(r.status)}</span>
-          <span style="color:${r.color};font-weight:700;">${escHtml(r.right)}</span>
-        </div>
-      </div>`
-      )
-      .join('');
-
-    if (nextRowsHtml !== lastRowsHtml) {
-      lastRowsHtml = nextRowsHtml;
+    const nextRowsHtml = buildRowsHtml(snap.rows);
+    if (nextRowsHtml !== lastRenderState.rowsHtml) {
+      lastRenderState.rowsHtml = nextRowsHtml;
       elRows.innerHTML = nextRowsHtml;
     }
 
-    ensureReopenToolbarBtn();
-
-    // 后台其他并行运行窗口提示条
+    // 后台其他并行运行窗口提示条（空状态时不重复触碰 DOM）
     if (snap.mode === 'chat' && snap.bgConvs.length > 0) {
-      elBgBar.style.display = 'flex';
+      if (lastRenderState.bgDisp !== 'flex') {
+        elBgBar.style.display = 'flex';
+        lastRenderState.bgDisp = 'flex';
+      }
       const nextBgHtml = snap.bgConvs
         .map(
           (b) => `
-        <div data-jump-cid="${escHtml(b.cid)}" style="padding:5px 9px;border-radius:8px;background:rgba(8,47,73,0.48);border:1px solid rgba(56,189,248,0.34);font-size:11px;color:#7dd3fc;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;transition:background 0.15s ease;">
+        <div data-jump-cid="${escHtml(b.cid)}" style="padding:5px 9px;border-radius:8px;background:rgba(8,47,73,0.48);border:1px solid rgba(56,189,248,0.34);font-size:11px;color:#7dd3fc;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;transition:background-color 0.15s ease;">
           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🔄 后台运行中: ${escHtml(b.title)}</span>
           <span style="flex-shrink:0;color:#38bdf8;font-weight:600;">点击切换 →</span>
         </div>`
         )
         .join('');
-      if (nextBgHtml !== lastBgHtml) {
-        lastBgHtml = nextBgHtml;
+      if (nextBgHtml !== lastRenderState.bgHtml) {
+        lastRenderState.bgHtml = nextBgHtml;
         elBgBar.innerHTML = nextBgHtml;
       }
     } else {
-      lastBgHtml = '';
-      elBgBar.style.display = 'none';
-      elBgBar.innerHTML = '';
+      if (lastRenderState.bgDisp !== 'none') {
+        elBgBar.style.display = 'none';
+        lastRenderState.bgDisp = 'none';
+      }
+      if (lastRenderState.bgHtml !== '') {
+        lastRenderState.bgHtml = '';
+        elBgBar.innerHTML = '';
+      }
     }
 
-    // 心跳与 SQLite 实时速率展示
-    if (snap.stateKind === 'stalled') {
-      elHb.style.color = '#f87171';
-      elHb.textContent =
-        autoHealCountdown > 0
-          ? `⚠️ 停滞! ${autoHealCountdown}s 后自动${snap.isSwarm ? '踢起唤醒' : '唤醒'}…`
-          : cfg.autoHeal && remainCooldown > 0 && snap.store
-            ? `⏳ 第 ${snap.store.totalAutoHeals || 1} 次催促已发出，${remainCooldown}s 后若仍无进展将继续自动催促…`
-            : snap.interruptedError
-              ? `⚠️ ${snap.interruptedError}`
-              : snap.isStalled && snap.isSubagentOnlyRunning && !snap.isSwarm
-                ? `⚠️ 子代理已 ${snap.idleSec}s 无新进展 (防插队未自动发送，可手动停止重调)`
-                : snap.isSwarm
-                  ? `⚠️ ${String(snap.subtitle || '').replace(/^⚠️\s*/, '')}`
-                  : `⚠️ 已 ${snap.idleSec}s 无进展输出`;
-    } else if (snap.stateKind === 'quota') {
-      elHb.style.color = '#fb923c';
-      elHb.textContent =
-        cfg.autoHeal && remainCooldown > 0 && snap.store
-          ? `⏳ 第 ${snap.store.totalAutoHeals || 1} 次催促已发出，${remainCooldown}s 后若仍无进展将继续自动催促…`
-          : '🚫 模型配额或限流受限 (已切换 300s 慢速探活)';
-    } else if (snap.stateKind === 'approval') {
-      elHb.style.color = '#fbbf24';
-      elHb.textContent =
-        snap.userGateKind === 'question'
-          ? '⏸ 等待您在输入框上方完成选择题 / 问答'
-          : '⏸ 等待人工审批授权操作';
-    } else if (snap.stateKind === 'browser') {
-      elHb.style.color = snap.idleSec > cfg.timeoutSec * 0.65 ? '#fbbf24' : '#22d3ee';
-      const hostSuffix = snap.browserHost ? ` · ${snap.browserHost}` : '';
-      elHb.textContent =
-        snap.idleSec <= 2
-          ? `● 浏览器心跳: 实时操控中${hostSuffix}`
-          : `● 浏览器心跳: ${snap.idleSec}s 前动作${hostSuffix}`;
-    } else if (snap.stateKind === 'swarm' || snap.stateKind === 'running') {
-      elHb.style.color = snap.idleSec > cfg.timeoutSec * 0.65 ? '#fbbf24' : '#10b981';
-      const actorSuffix = snap.isSwarm && snap.activeActor ? ` (${snap.activeActor})` : '';
-      elHb.textContent =
-        snap.idleSec <= 2
-          ? `● ${snap.isSwarm ? 'Swarm 心跳' : '心跳'}: 实时活跃中${actorSuffix}`
-          : `● ${snap.isSwarm ? 'Swarm 心跳' : '心跳'}: ${snap.idleSec}s 前活跃${actorSuffix}`;
-    } else {
-      elHb.style.color = '#34d399';
-      elHb.textContent = snap.isSwarm ? '● Swarm 心跳: 矩阵就绪 (全员待命)' : '● 心跳: 会话就绪 (等待指令)';
+    // 心跳与 SQLite 实时速率展示（Diff 写入）
+    const hbDisp = computeHeartbeatDisplay(snap, snap.idleSec, remainCooldown);
+    if (hbDisp.color !== lastRenderState.hbColor) {
+      elHb.style.color = hbDisp.color;
+      lastRenderState.hbColor = hbDisp.color;
+    }
+    if (hbDisp.text !== lastRenderState.hbTxt) {
+      elHb.textContent = hbDisp.text;
+      lastRenderState.hbTxt = hbDisp.text;
     }
 
-    elSql.textContent = snap.sqlInfo && snap.sqlInfo.inlineText ? snap.sqlInfo.inlineText : '';
-    elSql.title = snap.sqlInfo && snap.sqlInfo.inlineText ? snap.sqlInfo.inlineText : '';
+    const nextSqlTxt = snap.sqlInfo && snap.sqlInfo.inlineText ? snap.sqlInfo.inlineText : '';
+    if (nextSqlTxt !== lastRenderState.sqlTxt) {
+      elSql.textContent = nextSqlTxt;
+      elSql.title = nextSqlTxt;
+      lastRenderState.sqlTxt = nextSqlTxt;
+    }
+  }
+
+  // 活跃态轻量计时刷新：当 DOM 未变化且未触及超时/倒计时边界时，仅更新秒数文本，不重扫整页 DOM
+  function tryRefreshTickTimersOnly() {
+    if (!lastSnap || lastSnap.mode !== 'chat' || !lastSnap.isRunning) return false;
+    if (lastSnap.isSwarm || lastSnap.isStalled || lastSnap.quotaBlocked || lastSnap.waitingApproval) return false;
+    if (autoHealCountdown > 0 || lastRemainCooldown > 0) return false;
+    if (domVersion !== lastSampledDomVersion || getCurrentUrlSig() !== lastSampledUrl) return false;
+
+    const now = Date.now();
+    // 最多连续 3 秒仅刷计时，之后做一次完整校验兜底
+    if (now - lastSampledTs >= 3000) return false;
+
+    const baseTs = lastSnap.effectiveLastActiveTs || (lastSnap.store ? lastSnap.store.lastActiveTs : now);
+    const nextIdleSec = Math.max(0, Math.floor((now - baseTs) / 1000));
+    const threshold = lastSnap.effectiveTimeout || cfg.timeoutSec;
+    if (!lastSnap.isWaitingTimer && nextIdleSec >= threshold) return false;
+
+    // 隐藏态或胶囊态/折叠态：秒数未展示在当前可见 UI 中，0 次 DOM 操作
+    if (cfg.hidden || cfg.minimized || cfg.collapsed) {
+      return true;
+    }
+
+    const hbDisp = computeHeartbeatDisplay(lastSnap, nextIdleSec, 0);
+    if (hbDisp.color !== lastRenderState.hbColor) {
+      elHb.style.color = hbDisp.color;
+      lastRenderState.hbColor = hbDisp.color;
+    }
+    if (hbDisp.text !== lastRenderState.hbTxt) {
+      elHb.textContent = hbDisp.text;
+      lastRenderState.hbTxt = hbDisp.text;
+    }
+
+    // 若当前步骤列表中有运行中步骤，原地更新其耗时文本（不重建 innerHTML）
+    const store = lastSnap.store;
+    if (store && store.steps && store.steps.length > 0) {
+      const recent = store.steps.slice(-5);
+      const rowNodes = elRows.children;
+      if (rowNodes.length === recent.length) {
+        for (let i = 0; i < recent.length; i++) {
+          const s = recent[i];
+          if (!s.done && rowNodes[i]) {
+            const rightContainer = rowNodes[i].lastElementChild;
+            const durSpan = rightContainer ? rightContainer.lastElementChild : null;
+            if (durSpan) {
+              const nextDur = fmtDur(now - s.startedAt);
+              if (durSpan.textContent !== nextDur) durSpan.textContent = nextDur;
+            }
+          }
+        }
+      }
+    }
+    return true;
   }
 
   // 事件绑定：拖拽定位（面板与胶囊位置同步记忆）
@@ -2817,6 +3325,7 @@
       cfg.minimized = false;
       cfg.hidden = false;
       saveJson(localStorage, STORAGE_CFG_KEY, cfg);
+      domVersion++;
       syncVisibility();
       renderSnapshot();
       applyPositionAndClamp();
@@ -2833,6 +3342,7 @@
       cfg.hidden = !cfg.hidden;
       if (!cfg.hidden) cfg.minimized = false;
       saveJson(localStorage, STORAGE_CFG_KEY, cfg);
+      domVersion++;
       syncVisibility();
       renderSnapshot();
     }
@@ -2849,7 +3359,12 @@
     elBody.style.display = cfg.collapsed ? 'none' : 'block';
     elCollapseBtn.textContent = cfg.collapsed ? '▼' : '▲';
     hud.classList.toggle('is-collapsed', !!cfg.collapsed);
+    lastRenderState.hudCollapsed = !!cfg.collapsed;
     saveJson(localStorage, STORAGE_CFG_KEY, cfg);
+    if (!cfg.collapsed) {
+      domVersion++;
+      renderSnapshot();
+    }
     applyPositionAndClamp();
     elCollapseBtn.blur();
   });
@@ -2859,6 +3374,7 @@
     cfg.hidden = false;
     saveJson(localStorage, STORAGE_CFG_KEY, cfg);
     syncVisibility();
+    renderSnapshot();
     elMinBtn.blur();
   });
 
@@ -2874,6 +3390,7 @@
     cfg.timeoutSec = TIMEOUT_OPTIONS[(idx + 1) % TIMEOUT_OPTIONS.length];
     elTimeoutBtn.textContent = `超时阈值: ${cfg.timeoutSec}s`;
     saveJson(localStorage, STORAGE_CFG_KEY, cfg);
+    domVersion++;
     renderSnapshot();
   });
 
@@ -2883,6 +3400,8 @@
     elAutohealBtn.textContent = `断流自愈: ${cfg.autoHeal ? '开' : '关'}`;
     elAutohealBtn.classList.toggle('is-active', cfg.autoHeal);
     saveJson(localStorage, STORAGE_CFG_KEY, cfg);
+    syncObserverState();
+    domVersion++;
     renderSnapshot();
   });
 
@@ -2903,6 +3422,7 @@
     const view = document.querySelector('[data-testid="conversation-view"]');
     const agentResps = view ? view.querySelectorAll('[data-testid="agent-response"]') : null;
     const lastResp = agentResps && agentResps.length > 0 ? agentResps[agentResps.length - 1] : null;
+    domVersion++;
     const gate = detectUserInteractionGate(view, lastResp, true, 0, false);
     if (gate.active) {
       focusUserGateUI();
@@ -2914,7 +3434,7 @@
       st.noEffectStreak = 0;
       st.healBaselineSig = '';
       st.lastAutoHealSentTs = 0;
-      persistTurnStore(st);
+      persistTurnStore(st, true);
     }
     triggerRealWakeup('manual', latestKickPrompt);
   });
@@ -2947,12 +3467,13 @@
     }
   });
 
-  // 挂载 SQLite 指标回调钩子
+  // 挂载 SQLite 指标回调钩子（同步递增 domVersion 并刷新，兼容即时遥测与回归测试）
   const prevRenderMetrics = window.__ag_render_metrics;
   if (typeof prevRenderMetrics === 'function' && !prevRenderMetrics.__ag_wd_wrapped) {
     const wrapped = function (payload) {
       const res = prevRenderMetrics.apply(this, arguments);
       try {
+        domVersion++;
         renderSnapshot();
       } catch {}
       return res;
@@ -2962,69 +3483,243 @@
     window.__ag_render_metrics = wrapped;
   }
 
-  // MutationObserver 监听真实聊天区变化
-  let rafScheduled = false;
-  const scheduleRender = () => {
-    if (rafScheduled) return;
-    rafScheduled = true;
-    requestAnimationFrame(() => {
-      rafScheduled = false;
+  // ============================================================================
+  // 5. 低开销 MutationObserver：O(1) 自身/浮层过滤 + 节流与尾部防抖 + 自适应定时降频
+  // ============================================================================
+  const ACTIVE_RENDER_THROTTLE_MS = 400;
+  const IDLE_RENDER_THROTTLE_MS = 900;
+  const ROUTE_RENDER_DEBOUNCE_MS = 60;
+  const INTERACTION_YIELD_MS = 32;
+
+  let renderTimer = null;
+  let renderTimerDue = 0;
+  let lastKnownUrl = getCurrentUrlSig();
+  let metricsPillRef = null;
+  let metricsTipRef = null;
+
+  function isActiveMonitoringState() {
+    if (!lastSnap) return true;
+    if (autoHealCountdown > 0 || lastRemainCooldown > 0) return true;
+    if (lastSnap.bgConvs && lastSnap.bgConvs.length > 0) return true;
+    const sk = lastSnap.stateKind;
+    return sk === 'running' || sk === 'swarm' || sk === 'browser' || sk === 'approval' || sk === 'stalled';
+  }
+
+  function scheduleRender(reason = 'dom') {
+    if (cleanedUp || document.hidden) return;
+    if (cfg.hidden && !cfg.autoHeal) return;
+
+    const now = Date.now();
+    const curUrl = getCurrentUrlSig();
+    const routeChanged = curUrl !== lastKnownUrl;
+    if (routeChanged) lastKnownUrl = curUrl;
+
+    let delay = 0;
+    if (reason === 'route' || routeChanged) {
+      delay = ROUTE_RENDER_DEBOUNCE_MS;
+    } else {
+      const throttleMs = isActiveMonitoringState() ? ACTIVE_RENDER_THROTTLE_MS : IDLE_RENDER_THROTTLE_MS;
+      const elapsed = now - lastSampledTs;
+      // 即使已过节流窗口，也延迟 32ms 让出当前点击/菜单展开交互帧，避免主线程抢占掉帧
+      delay = elapsed >= throttleMs ? INTERACTION_YIELD_MS : Math.max(INTERACTION_YIELD_MS, throttleMs - elapsed);
+    }
+
+    const targetDue = now + delay;
+    if (renderTimer && renderTimerDue <= targetDue) return;
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+      window.__ag_watchdog_render_timer = null;
+    }
+
+    renderTimerDue = targetDue;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      renderTimerDue = 0;
+      window.__ag_watchdog_render_timer = null;
+      if (cleanedUp || document.hidden) return;
       try {
         renderSnapshot();
       } catch {}
-    });
-  };
+    }, delay);
+    window.__ag_watchdog_render_timer = renderTimer;
+  }
 
-  const domObs = new MutationObserver((mutations) => {
+  // O(1) 判断节点是否属于 HUD 自身、Metrics 胶囊或无关悬浮菜单/tooltip/下拉框
+  function isIgnoredUiNode(el) {
+    if (!el || el.nodeType !== 1) return true;
+    if (el === hud || el === pill || el === reopenBtnEl) return true;
+    if (hud.contains(el) || pill.contains(el)) return true;
+    if (reopenBtnEl && reopenBtnEl.contains(el)) return true;
+
+    if (!metricsPillRef || !metricsPillRef.isConnected) {
+      metricsPillRef = document.getElementById('ag-live-metrics-pill');
+    }
+    if (metricsPillRef && (el === metricsPillRef || metricsPillRef.contains(el))) return true;
+
+    if (!metricsTipRef || !metricsTipRef.isConnected) {
+      metricsTipRef = document.getElementById('ag-live-metrics-tooltip');
+    }
+    if (metricsTipRef && (el === metricsTipRef || metricsTipRef.contains(el))) return true;
+
+    // 向上最多检查 5 层，过滤 Radix / FloatingUI 下拉菜单、模式列表、模型选择框与 tooltip，
+    // 但绝不过滤审批/问答/配额提示等核心门禁弹窗
+    let cur = el;
+    for (let depth = 0; cur && cur !== document.body && depth < 5; depth++) {
+      const tid = cur.getAttribute ? cur.getAttribute('data-testid') || '' : '';
+      if (
+        tid &&
+        (tid === 'interaction-takeover-card' ||
+          tid === 'input-box-notification-card' ||
+          tid.indexOf('permission') !== -1 ||
+          tid.indexOf('prompt') !== -1 ||
+          tid.indexOf('modal') !== -1 ||
+          tid === 'subagent-approve')
+      ) {
+        return false;
+      }
+      const role = cur.getAttribute ? cur.getAttribute('role') || '' : '';
+      if (role === 'tooltip' || role === 'menu' || role === 'menuitem' || role === 'listbox' || role === 'option') {
+        return true;
+      }
+      if (
+        cur.hasAttribute &&
+        (cur.hasAttribute('data-radix-popper-content-wrapper') ||
+          cur.hasAttribute('data-floating-ui-portal') ||
+          cur.getAttribute('data-slot') === 'tooltip-content')
+      ) {
+        return true;
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  }
+
+  function isBodyOnlyIgnoredChildMutation(m) {
+    if (m.target !== document.body || m.type !== 'childList') return false;
+    let sawAnyElement = false;
+    for (let j = 0; j < m.addedNodes.length; j++) {
+      const n = m.addedNodes[j];
+      if (n && n.nodeType === 1) {
+        sawAnyElement = true;
+        if (!isIgnoredUiNode(n)) return false;
+      }
+    }
+    for (let j = 0; j < m.removedNodes.length; j++) {
+      const n = m.removedNodes[j];
+      if (n && n.nodeType === 1) {
+        sawAnyElement = true;
+        if (!isIgnoredUiNode(n)) return false;
+      }
+    }
+    return sawAnyElement;
+  }
+
+  domObs = new MutationObserver((mutations) => {
+    if (document.hidden || (cfg.hidden && !cfg.autoHeal)) return;
     let relevant = false;
     for (let i = 0; i < mutations.length; i++) {
-      const t = mutations[i].target;
+      const m = mutations[i];
+      if (isBodyOnlyIgnoredChildMutation(m)) continue;
+      const t = m.target;
       const el = t && t.nodeType === 1 ? t : t ? t.parentElement : null;
-      if (!el) continue;
-      if (
-        el.id === 'ag-watchdog-hud' ||
-        el.id === 'ag-watchdog-dock-pill' ||
-        el.id === 'ag-watchdog-reopen-btn' ||
-        el.closest(
-          '#ag-watchdog-hud, #ag-watchdog-dock-pill, #ag-watchdog-reopen-btn, #ag-live-metrics-pill, #ag-live-metrics-tooltip'
-        )
-      ) {
-        continue;
-      }
+      if (!el || isIgnoredUiNode(el)) continue;
       relevant = true;
       break;
     }
-    if (relevant) scheduleRender();
+    if (relevant) {
+      domVersion++;
+      scheduleRender('dom');
+    }
   });
 
-  if (document.body) {
-    domObs.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
-  }
+  syncObserverState();
   window.__ag_watchdog_obs = domObs;
 
-  // 每秒刷新一次实时计时、Swarm 轮询与防卡死检测
-  const tickTimer = setInterval(() => {
-    if (!document.hidden) {
-      try {
-        renderSnapshot();
-      } catch {}
+  // 自适应降频定时器：活跃/倒计时 1s（DOM 未变时优先走仅秒数轻量刷新）；空闲/完成态降频至 4s；隐藏无自愈 5s 保底
+  let tickTimer = null;
+  let cleanedUp = false;
+
+  function getNextTickDelayMs() {
+    if (cfg.hidden && !cfg.autoHeal) return 5000;
+    if (isActiveMonitoringState()) return 1000;
+    return 4000;
+  }
+
+  function scheduleNextTick() {
+    if (cleanedUp) return;
+    if (tickTimer) {
+      clearTimeout(tickTimer);
+      tickTimer = null;
     }
-  }, 1000);
-  window.__ag_watchdog_timer = tickTimer;
+    tickTimer = setTimeout(() => {
+      tickTimer = null;
+      window.__ag_watchdog_timer = null;
+      if (cleanedUp) return;
+      if (!document.hidden) {
+        try {
+          if (cfg.hidden && !cfg.autoHeal) {
+            ensureReopenToolbarBtn();
+          } else if (!tryRefreshTickTimersOnly()) {
+            renderSnapshot();
+          }
+        } catch {}
+      }
+      scheduleNextTick();
+    }, getNextTickDelayMs());
+    window.__ag_watchdog_timer = tickTimer;
+  }
+
+  const onVisibilityChange = () => {
+    if (cleanedUp) return;
+    if (document.hidden) {
+      flushPendingPersist();
+      return;
+    }
+    if (!cfg.hidden || cfg.autoHeal) {
+      domVersion++;
+      scheduleRender('route');
+    }
+  };
+
+  const onPopState = () => {
+    if (cleanedUp) return;
+    domVersion++;
+    scheduleRender('route');
+  };
+
+  const onPageUnload = () => {
+    flushPendingPersist();
+  };
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('popstate', onPopState);
+  window.addEventListener('pagehide', onPageUnload);
+  window.addEventListener('beforeunload', onPageUnload);
 
   renderSnapshot();
+  scheduleNextTick();
 
   // 注册幂等清理函数与外部生命周期钩子
-  let cleanedUp = false;
   window.__ag_watchdog_cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
-    clearInterval(tickTimer);
+    flushPendingPersist();
+    if (tickTimer) {
+      clearTimeout(tickTimer);
+      tickTimer = null;
+    }
     window.__ag_watchdog_timer = null;
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+    }
+    window.__ag_watchdog_render_timer = null;
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    window.__ag_watchdog_persist_timer = null;
     if (window.__ag_watchdog_dcl_handler) {
       try {
         window.removeEventListener('DOMContentLoaded', window.__ag_watchdog_dcl_handler);
@@ -3032,9 +3727,14 @@
       window.__ag_watchdog_dcl_handler = null;
     }
     try {
-      domObs.disconnect();
+      if (domObs) domObs.disconnect();
     } catch {}
+    domObsActive = false;
     window.__ag_watchdog_obs = null;
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('popstate', onPopState);
+    window.removeEventListener('pagehide', onPageUnload);
+    window.removeEventListener('beforeunload', onPageUnload);
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
     window.removeEventListener('resize', onWindowResize);
@@ -3045,6 +3745,7 @@
     if (window.extensions && window.extensions.sendAuthorities && window.extensions.sendAuthorities.__ag_wd_orig) {
       window.extensions.sendAuthorities = window.extensions.sendAuthorities.__ag_wd_orig;
     }
+    reopenBtnEl = null;
     document
       .querySelectorAll('#ag-watchdog-hud, #ag-watchdog-dock-pill, #ag-watchdog-reopen-btn')
       .forEach((el) => el.remove());
