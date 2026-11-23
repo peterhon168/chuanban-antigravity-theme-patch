@@ -1,14 +1,36 @@
-# 船板的 Antigravity 主题、字体与汉化补丁 (v6.0.2)
+# Antigravity 全能工作台套件：船板主题汉化 + 「完成了么」HUD + 三模型协同与策略热切换 (v6.0.2+)
 
-[![Version](https://img.shields.io/badge/version-6.0.2-3D6470.svg)](https://github.com/Anarcadia/chuanban-antigravity-theme-patch)
-[![Antigravity](https://img.shields.io/badge/Antigravity-2.34.0%2B-3F6E7A.svg)](https://github.com/Anarcadia/chuanban-antigravity-theme-patch)
+[![Version](https://img.shields.io/badge/version-6.0.2%2Bsuite-3D6470.svg)](https://github.com/peterhon168/my-antigravity-suite)
+[![Antigravity](https://img.shields.io/badge/Antigravity-2.34.0%2B-3F6E7A.svg)](https://github.com/peterhon168/my-antigravity-suite)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.0.0%20(22.13%2B%20Full)-339933.svg)](https://nodejs.org/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/Anarcadia/chuanban-antigravity-theme-patch)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/peterhon168/my-antigravity-suite)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-面向 Google Antigravity（支持 `2.34.0+`）的轻量级外观、排版、汉化与本地只读统计增强补丁。专注于纯粹的界面审美与信息可读性优化，由 AI Agent 一键部署，支持热重载个性化定制与随时无损还原。
+本仓库为 **独立主仓库**（非 GitHub Fork，彻底杜绝网页端 `Sync fork` 误覆盖定制层）：在船板 Antigravity 主题、字体与母语级汉化内核（`core/`）基础上，内置 **「完成了么」实时会话监控与防卡死自愈 HUD**、**三模型协同（`A·省额` / `B·Opus`）热切换状态桥**，以及 **`Gemini` / `Opus v2` / `Sonnet v2` 三套 `~/.gemini/GEMINI.md` 策略模板落盘级自动切换**。
 
-> 供 AI Agent 读取的完整部署与改装契约见仓库根目录 **[`SKILL.md`](https://github.com/Anarcadia/chuanban-antigravity-theme-patch/blob/main/SKILL.md)**，历史版本记录见 **[`CHANGELOG.md`](CHANGELOG.md)**。
+> 供 AI Agent 读取的完整部署与改装契约见仓库根目录 **[`SKILL.md`](https://github.com/peterhon168/my-antigravity-suite/blob/main/SKILL.md)**，历史版本记录见 **[`CHANGELOG.md`](CHANGELOG.md)**。
+
+---
+
+## 🔥 专属增强套件（`user/` 层内置，跨设备一键同步）
+
+1. **「完成了么」HUD（`user/custom.js` + `user/custom.css`）**
+   - 实时追踪当前会话、后台并发对话与 `Swarm` 多智能体矩阵进度，支持超时断流倒计时自动发「继续」自愈唤醒（`⌥+W` 随时显隐）。
+   - 底栏内置 **`协同: [ A·省额 | B·Opus ]`** 与 **`策略: Gemini / Opus v2 / Sonnet v2`** 热切换胶囊（最小化悬浮胶囊同步显示 `A·Gem` / `B·Opus` / `B·Sonnet`）。
+2. **三模型协同与三套策略自动路由（`user/collab-bridge/`）**
+   - **内置三套策略模板**（`user/collab-bridge/policies/`）：`gemini.md`（Gemini 4 Operating Policy）、`opus.md`（Anthropic `opus v2.md`）、`sonnet.md`（Anthropic `Sonnet v2.md`）与 `common-footer.md`（`swarm` 真实锁模规则）。
+   - **四层自动 + 手动落盘切换 `~/.gemini/GEMINI.md`**：
+     - 输入框左下角切换模型选择器时，HUD 在发消息前自动将 `~/.gemini/GEMINI.md` 替换为对应策略；
+     - `PreToolUse` Hook 在 `swarm` / `post_message` / `run_command (agy)` 拉起 Claude 子代理前，提前切换为 `opus v2` 或 `Sonnet v2` 并加保护锁，避免 Claude 上游分类器误拦；
+     - `PreInvocation` Hook 每轮按 `modelName` 静默校验对齐，不向聊天气泡追加噪音文本；
+     - 支持点击 HUD 胶囊手动一键强制轮换。
+   - **受限派活与只读顾问封装**（`user/collab-bridge/bin/`）：跨平台内置 `codex-worker`（强制 `-s workspace-write` 与 `--review` 两级代码审查）与 `agy-ask`（只读双盲方案对比与文案润色）。
+3. **上游内核安全单向同步（`sync-upstream.mjs`）**
+   - 想要升级船板上游 `Anarcadia/chuanban-antigravity-theme-patch` 的最新 `core/` 内核时，直接运行：
+     ```bash
+     node sync-upstream.mjs
+     ```
+     脚本**仅同步上游 `core/` 目录**，100% 物理锁定保护 `user/`（「完成了么」HUD 与 `collab-bridge` 三套策略模板）绝不被覆盖。
 
 ---
 
@@ -63,22 +85,22 @@
 1. **环境准备**：安装 **Node.js `>= 22.0.0`**（推荐 **`>= 22.13.0`** 以启用信息胶囊与 Token 统计）。必备字体支持 Agent 通过脚本**一键自动下载并注册**；仅当本机终端网络无法直连 Google Drive 时，再从底部 [**Google Drive 资源包**](https://drive.google.com/drive/folders/1NX92SgVUqtSjWg6bt6sIJXy-cn7J_boC) 经浏览器手动下载。
 2. **复制以下引导词发给你的 AI Agent（Antigravity / Claude Code / Codex / Cursor 等）**：
 
-> **💬 复制发给 Agent（新用户一键安装）**：  
-> 请帮我克隆 `https://github.com/Anarcadia/chuanban-antigravity-theme-patch.git`（或读取我已下载解压的补丁目录），先完整阅读仓库内的 `SKILL.md`，再按以下顺序部署并处理边缘情况：  
+> **💬 复制发给 Agent（新设备一键全量安装：主题 + 完成了么 HUD + 状态桥 + 三套策略）**：  
+> 请帮我克隆 `https://github.com/peterhon168/my-antigravity-suite.git`（或读取我已下载解压的目录），先完整阅读仓库内的 `SKILL.md`，再按以下顺序部署并处理边缘情况：  
 > 1. 若本机有 `nvm` / `fnm` / `volta`，优先切换至 `Node >= 22.13.0` 执行命令；运行 `node install.mjs doctor` 检查 `fonts.allRequiredInstalled` 与 `fonts.unregisteredWarning`。  
 > 2. 若缺少字体（或 Windows 提示有未写注册表的用户字体）：
 >    - 若我本地已下载好字体目录或 `.zip`，直接执行 `node install.mjs install-fonts --from "<字体目录或.zip路径>"`（支持自动解压 `.zip`，Windows 下自动用 UTF-16 注册表写入并广播，勿仅手动复制文件）；
 >    - 若本地尚未下载，**直接执行 `node install.mjs install-fonts --auto-download`**（若 Windows 检出旧版 `SuperTTC` 请追加 `--retire-super-ttc`），脚本会自动下载缺失的 `Anthropic Serif/Mono` 与 `170 MB` 精简拆分版更纱黑体 `.zip` 并完成注册；
 >    - 仅当终端网络/代理受限导致 `--auto-download` 失败时，才提示我用浏览器从 Google Drive 共享目录下载 `AnthropicSerif-Regular/Bold.ttf`、`AnthropicMono-Regular.ttf` 及 [`Windows-Sarasa-Split-SC-TTF-v1.0.43.zip`](https://drive.google.com/file/d/1iVVvZXtwUcDiHy42tJ25X6N-JlOf3l7A/view?usp=sharing)，下载后交由 `install-fonts --from` 安装（macOS 缺少更纱也可用 `brew install --cask font-sarasa-gothic`）。
-> 3. 运行 `node install.mjs install` 完成安装（默认启用 `"morandi"` 莫兰迪风格；macOS 默认单图标模式 `launcherInstalled: false` 属正常设计）。
+> 3. 运行 **`node install.mjs install --sync-user`** 完成全量安装（会自动部署主题内核、同步「完成了么」HUD，并自动运行 `user/collab-bridge/setup.mjs` 部署本地状态桥、`gemini`/`opus v2`/`sonnet v2` 三套策略模板、`hooks.json` 与跨平台开机自启）。
 > 4. 检查输出中的 `cdpStatus`（以及 Windows 新装字体后的 `restartAntigravityRequired`）：若为 `"missing_opt_in_flag"` 或 Windows 刚新装完字体，**如果你当前正在 Antigravity 内部对话中运行，请勿执行 `--force` 强行重启自断会话**，只需把空闲时执行的命令 `node ~/.gemini/antigravity/theme-patch/install.mjs relaunch`（Windows 为 `node "$HOME\.gemini\antigravity\theme-patch\install.mjs" relaunch`，或提示我手动退出重开一次客户端）发给我；如果你在外部独立终端运行且客户端空闲，请直接执行 `node install.mjs relaunch`。
-> 5. 在端口就绪后运行 `node install.mjs verify`，确认 `"ok": true`、`"hasStyle": true` 且 `fonts.allRequiredInstalled: true` 即完成验收。
+> 5. 在端口就绪后运行 `node install.mjs verify`，确认 `"ok": true`、`"hasStyle": true` 且 `http://127.0.0.1:19876/health` 返回 `"ok": true` 即完成验收。
 
-### 二、老用户升级至 v6.0.2
-`node install.mjs install` 会自动备份旧版 `core/` 内核、将旧版默认浅色预设平滑迁移至 `"morandi"`，并完整保留 `user/` 目录下的个人自定义设置：
+### 二、已有设备同步升级
+`node install.mjs install --sync-user` 会自动备份旧版 `core/` 与 `user/`，并同步仓库最新的「完成了么」HUD、状态桥与三套策略模板：
 
-> **💬 复制发给 Agent（老用户无缝升级）**：  
-> 请帮我拉取最新的 `https://github.com/Anarcadia/chuanban-antigravity-theme-patch.git`（或读取最新解压目录），阅读其中的 `SKILL.md` 后直接运行 `node install.mjs install` 升级至 `v6.0.2`（若我此前使用的是早期单文件版脚本且有自定义字号/配色，请先迁移到 `~/.gemini/antigravity/theme-patch/user/`）。若安装后 `cdpStatus` 为 `"missing_opt_in_flag"` 且你正在 Antigravity 内部会话中运行，请勿直接中断当前对话，告诉我空闲时运行 `node ~/.gemini/antigravity/theme-patch/install.mjs relaunch`（或手动重开一次客户端）即可；端口已就绪则直接运行 `node install.mjs verify` 验收。
+> **💬 复制发给 Agent（老设备无缝同步升级）**：  
+> 请帮我拉取最新的 `https://github.com/peterhon168/my-antigravity-suite.git`，阅读其中的 `SKILL.md` 后直接运行 **`node install.mjs install --sync-user`** 同步最新内核、「完成了么」HUD 与 `collab-bridge` 三套策略状态桥。若安装后 `cdpStatus` 为 `"missing_opt_in_flag"` 且你正在 Antigravity 内部会话中运行，请勿直接中断当前对话，告诉我空闲时运行 `node ~/.gemini/antigravity/theme-patch/install.mjs relaunch`（或手动重开一次客户端）即可；端口已就绪则直接运行 `node install.mjs verify` 验收。
 
 ### 三、日常定制与排障话术
 - **🎨 切换风格、语言或微调字号**：日常切换主题与中英文可直接在「系统设置 → 外观界面」点击对应按钮；如需修改扩展预设或字号，可让 Agent 按 `SKILL.md` 修改 `user/config.json`（如调大 `"--ag-chat-font-size"`）。
@@ -99,5 +121,5 @@
 | 入口 | 地址 | 说明 |
 | :--- | :--- | :--- |
 | **1. Google Drive 资源包（含字体）** | [**Google Drive 共享文件夹**](https://drive.google.com/drive/folders/1NX92SgVUqtSjWg6bt6sIJXy-cn7J_boC) | 含成品包与必备字体：`AnthropicSerif-Regular/Bold.ttf`、`AnthropicMono-Regular.ttf`、**Windows 专用精简拆分字体包 [`Windows-Sarasa-Split-SC-TTF-v1.0.43.zip`](https://drive.google.com/file/d/1iVVvZXtwUcDiHy42tJ25X6N-JlOf3l7A/view?usp=sharing)**（避免大体积单体 `SuperTTC` 在 Windows 下引发卡顿）及 macOS/Linux 用 `Sarasa-SuperTTC.ttc`（macOS 亦可直接 `brew install --cask font-sarasa-gothic`）。 |
-| **2. GitHub 代码仓库** | [**Anarcadia/chuanban-antigravity-theme-patch**](https://github.com/Anarcadia/chuanban-antigravity-theme-patch) | 预封装内核 `core/`、个人改装层 `user/`、生命周期 CLI `install.mjs`、[`SKILL.md`](https://github.com/Anarcadia/chuanban-antigravity-theme-patch/blob/main/SKILL.md) 与 [`CHANGELOG.md`](CHANGELOG.md)。 |
+| **2. GitHub 独立主仓库** | [**peterhon168/my-antigravity-suite**](https://github.com/peterhon168/my-antigravity-suite) | 预封装内核 `core/`、「完成了么」HUD 与 `user/collab-bridge/` 三模型状态桥、生命周期 CLI `install.mjs`、上游内核同步器 `sync-upstream.mjs`、[`SKILL.md`](https://github.com/peterhon168/my-antigravity-suite/blob/main/SKILL.md)。 |
 | **3. Notion 引导页** | [**chuanban-antigravity-theme-patch**](https://chuanban.notion.site/chuanban-antigravity-theme-patch-db7c5846f37546be9481cd791aed0554) | 图文说明与安装引导镜像页。 |

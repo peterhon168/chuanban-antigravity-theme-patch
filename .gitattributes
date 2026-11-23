@@ -5,3 +5,6 @@
 *.ttc binary
 *.otf binary
 *.woff2 binary
+user/** merge=ours
+README.md merge=ours
+SKILL.md merge=ours

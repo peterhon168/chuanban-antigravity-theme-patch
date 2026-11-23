@@ -25,7 +25,7 @@ description: 船板的 Antigravity 2.0 主题、字体与汉化补丁（v6.0.2 �
    - 必备字体：`AnthropicSerif-Regular.ttf`、`AnthropicSerif-Bold.ttf`、`AnthropicMono-Regular.ttf`，以及更纱黑体中文包（`v5.5.0` UI 西文直连官方 `Google Sans Flex`，**不再依赖 `AnthropicSans-*.ttf`**）。
    - **全平台首选一键自动下载与安装**：`install.mjs` 内置直连下载器（自动绕过 Google Drive 大文件确认页、Windows 自动探测系统代理、二进制魔数防 HTML 拦截页误判、自动解压 `.zip`），直接运行 **`node install.mjs install-fonts --auto-download`**（Windows 退订旧 `SuperTTC` 加 `--retire-super-ttc`）即可补齐全部缺失字体。
    - **手动下载兜底（Windows 强烈推荐拆分版 SC TTF）**：若终端无代理需走浏览器手动下载，可直接从 Google Drive 下载 **[`Windows-Sarasa-Split-SC-TTF-v1.0.43.zip`](https://drive.google.com/file/d/1iVVvZXtwUcDiHy42tJ25X6N-JlOf3l7A/view?usp=sharing)**（170 MB，含 `SarasaUiSC` + `SarasaMonoSlabSC` 共 14 个 SC 字重 `.ttf`，避免 791 MB `Sarasa-SuperTTC.ttc` 在 DirectWrite/Chromium 引起卡顿与 >2GB 虚存占用，见 #19）与 3 个 `Anthropic*.ttf`，无需手动解压即可运行 `node install.mjs install-fonts --from "<下载目录或.zip路径>" --retire-super-ttc`；更纱黑体亦可从 [`be5invis/Sarasa-Gothic` Releases](https://github.com/be5invis/Sarasa-Gothic/releases) 获取（注意官方拆分包为 `.7z`，Windows 10 需先装 7-Zip；macOS 亦可用 `brew install --cask font-sarasa-gothic`）。
-2. **GitHub 代码仓库**：<https://github.com/Anarcadia/chuanban-antigravity-theme-patch>
+2. **GitHub 独立主仓库**：<https://github.com/peterhon168/my-antigravity-suite>（内置 `user/custom.js`「完成了么」HUD + `user/collab-bridge/` 三模型状态桥与 `gemini`/`opus v2`/`sonnet v2` 三套策略模板；同步上游船板 `core/` 内核请执行 `node sync-upstream.mjs`，严禁直接覆盖 `user/`）
 3. **Notion 引导页**：<https://chuanban.notion.site/chuanban-antigravity-theme-patch-db7c5846f37546be9481cd791aed0554>
 
 ### 实机样式基准参考
