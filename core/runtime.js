@@ -106,7 +106,7 @@
     }
   }
 
-  const PATCH_VERSION = boot.version || '20261119-v5.5.0';
+  const PATCH_VERSION = boot.version || '20261123-v6.0.2';
   const DETECTED_OS =
     boot.platform || (/Win/i.test(navigator.platform || '') ? 'win32' : /Mac/i.test(navigator.platform || '') ? 'darwin' : 'linux');
   const ENABLED = boot.enabled !== false;
@@ -118,6 +118,8 @@
     {
       i18n: true,
       metrics: true,
+      tokenAnalytics: true,
+      googleFonts: true,
       composerWaxSeal: true,
       deadlockHealer: true,
       coldBootHealer: true,
@@ -129,10 +131,117 @@
     boot.modules || {}
   );
 
-  const DEFAULT_PRESET = boot.preset || 'high-contrast';
+  const DEFAULT_PRESET = boot.preset || 'morandi';
   const DEFAULT_DARK_PRESET = boot.darkPreset || 'onyx';
+  const RAW_INSTALLED_LOCALE = String(boot.installedLocale || 'zh-CN').trim() || 'zh-CN';
+  // 当前第一阶段仅实装 zh-CN 词典与无词典 none；非法预留值统一回落至 zh-CN 防按钮与词典语言错配
+  const INSTALLED_LOCALE = RAW_INSTALLED_LOCALE === 'none' || RAW_INSTALLED_LOCALE === 'zh-CN' ? RAW_INSTALLED_LOCALE : 'zh-CN';
+  const HAS_LOCALE_PACK =
+    INSTALLED_LOCALE !== 'none' &&
+    !!(boot.i18nDict && typeof boot.i18nDict === 'object' && Object.keys(boot.i18nDict).length > 0);
+
+  // 预留多语种单选扩展元数据表（当前阶段使用 zh-CN；下一版本支持安装期单选 ja 或 none）
+  const LOCALE_META = {
+    'zh-CN': {
+      btnLabel: '中文',
+      tooltip: '简体中文',
+      rowLabel: '界面语言',
+      enTooltip: '英文原版',
+      themeTooltips: {
+        native: '原版配色',
+        absolutely: 'Absolutely！',
+        morandi: '莫兰迪色',
+        warmDark: '暖纸深色',
+        onyx: '深色'
+      },
+      extHeading: '本地扩展',
+      tokenTab: 'Token 统计'
+    },
+    ja: {
+      btnLabel: '日本語',
+      tooltip: '日本語',
+      rowLabel: '表示言語',
+      enTooltip: 'Original English',
+      themeTooltips: {
+        native: '純正テーマ',
+        absolutely: 'Absolutely!',
+        morandi: 'モランディ',
+        warmDark: '暖色ダーク',
+        onyx: 'ダーク'
+      },
+      extHeading: 'ローカル拡張',
+      tokenTab: 'Token 統計'
+    }
+  };
+  const EN_UI_STRINGS = {
+    rowLabel: 'Language',
+    enTooltip: 'Original English',
+    themeTooltips: {
+      native: 'Original Theme',
+      absolutely: 'Absolutely!',
+      morandi: 'Morandi',
+      warmDark: 'Warm Dark',
+      onyx: 'Dark'
+    },
+    extHeading: 'Local Extensions',
+    tokenTab: 'Token Analytics'
+  };
+
+  if (
+    !window.__ag_persist_preset_timer &&
+    !(window.__ag_pending_persist_map && window.__ag_pending_persist_map.uiLang !== undefined)
+  ) {
+    if (!HAS_LOCALE_PACK) {
+      window.__ag_runtime_ui_lang = 'en';
+    } else if (window.__ag_host_ui_lang === 'en' || window.__ag_host_ui_lang === 'target') {
+      window.__ag_runtime_ui_lang = window.__ag_host_ui_lang;
+    } else {
+      window.__ag_runtime_ui_lang = MODULES.i18n === false ? 'en' : 'target';
+    }
+  } else if (!HAS_LOCALE_PACK) {
+    window.__ag_runtime_ui_lang = 'en';
+  }
+
+  function isUiEnglish() {
+    return !HAS_LOCALE_PACK || window.__ag_runtime_ui_lang === 'en';
+  }
+
+  function getSelfUiStrings() {
+    return isUiEnglish() ? EN_UI_STRINGS : LOCALE_META[INSTALLED_LOCALE] || LOCALE_META['zh-CN'];
+  }
+
+  if (ENABLED && document.documentElement) {
+    document.documentElement.setAttribute('data-ag-lang', isUiEnglish() ? 'en' : INSTALLED_LOCALE);
+  }
+
   const DEFAULT_EXCLUDE_I18N =
-    'code, pre, kbd, samp, textarea, input, style, script, noscript, [contenteditable="true"], [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, [data-testid="conversation-row-history"] a[href^="/c/"], [data-testid="conversation-row-history"] span.truncate, [data-testid="conversation-navigator-turn"], .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill], #ag-live-metrics-tooltip';
+    'code, pre, kbd, samp, textarea, input, style, script, noscript, [contenteditable="true"], [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [class*="onyx-key"], .prose, .markdown, [class*="chat-message"], [class*="group/file-title"], [data-uri^="file:"], [data-uri^="vscode-"], a.inline-pill[href^="file:"], a.inline-pill[href^="vscode-"], [data-testid="conversation-row-sidebar"] a[href^="/c/"], [data-testid="conversation-row-sidebar"] span.truncate, [data-testid="conversation-row-history"] a[href^="/c/"], [data-testid="conversation-row-history"] span.truncate, [data-testid="conversation-navigator-turn"], .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title, #ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill], #ag-live-metrics-tooltip, #ag-token-nav-section, #ag-token-analytics-panel, #ag-ta-tooltip, [data-ag-token-ui], [data-ag-lang-row="1"]';
+
+  function cleanupTokenAnalyticsDom() {
+    try {
+      document.querySelectorAll('.settings-modal-container[data-ag-token-tab-active]').forEach((el) => {
+        el.removeAttribute('data-ag-token-tab-active');
+      });
+      document.querySelectorAll('[data-ag-native-settings-scroll]').forEach((el) => {
+        el.removeAttribute('data-ag-native-settings-scroll');
+      });
+      const navSec = document.getElementById('ag-token-nav-section');
+      if (navSec) navSec.remove();
+      const panelEl = document.getElementById('ag-token-analytics-panel');
+      if (panelEl) panelEl.remove();
+      const hmTip = document.getElementById('ag-ta-tooltip');
+      if (hmTip) hmTip.remove();
+    } catch (e) {}
+    try {
+      delete window.__ag_on_token_analytics;
+      delete window.__ag_open_token_analytics_tab;
+      delete window.__ag_sync_token_analytics_fn;
+    } catch (e) {
+      window.__ag_on_token_analytics = null;
+      window.__ag_open_token_analytics_tab = null;
+      window.__ag_sync_token_analytics_fn = null;
+    }
+  }
 
   const SELECTORS = Object.assign(
     {
@@ -181,6 +290,7 @@
     if (staleTt && staleTt.getAttribute('data-ag-tt-ver') !== PATCH_VERSION) {
       staleTt.remove();
     }
+    cleanupTokenAnalyticsDom();
   } catch (e) {}
   if (window.__ag_dcl_handler) {
     try {
@@ -296,7 +406,10 @@
 
     let varStyle = document.getElementById('ag-user-theme-vars');
     if (globalDecls.length === 0 && lightDecls.length === 0 && darkDecls.length === 0) {
-      if (varStyle) varStyle.remove();
+      if (varStyle) {
+        varStyle.remove();
+        window.__ag_style_rev = (window.__ag_style_rev || 0) + 1;
+      }
     } else {
       const head = document.head || document.getElementsByTagName('head')[0] || document.documentElement;
       if (!varStyle) {
@@ -319,17 +432,18 @@
       }
       if (lightDecls.length > 0) {
         blocks.push(
-          `html[data-ag-os][data-ag-wax-seal]:not([data-ag-theme-mode="dark"]):not(:has(> body.dark)), html[data-ag-os][data-ag-wax-seal]:not([data-ag-theme-mode="dark"]) body:not(.dark) { ${lightDecls.join(' ')} }`
+          `html[data-ag-os][data-ag-wax-seal]:not([data-ag-theme-mode="dark"]), html[data-ag-os][data-ag-wax-seal]:not([data-ag-theme-mode="dark"]) body:not(.dark) { ${lightDecls.join(' ')} }`
         );
       }
       if (darkDecls.length > 0) {
         blocks.push(
-          `html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled])[data-ag-theme-mode="dark"], html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled])[data-ag-theme-mode="dark"] body, html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled]):has(> body.dark), html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled]) body.dark { ${darkDecls.join(' ')} }`
+          `html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled])[data-ag-theme-mode="dark"], html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled])[data-ag-theme-mode="dark"] body, html[data-ag-os][data-ag-wax-seal]:not([data-ag-disabled]) body.dark { ${darkDecls.join(' ')} }`
         );
       }
       const nextCss = blocks.join('\n');
       if (varStyle.textContent !== nextCss) {
         varStyle.textContent = nextCss;
+        window.__ag_style_rev = (window.__ag_style_rev || 0) + 1;
       }
     }
 
@@ -457,10 +571,41 @@
       if (typeof setOverlay !== 'function') return;
       const targetEl = document.body || document.documentElement;
       if (!targetEl || typeof getComputedStyle !== 'function') return;
-      const fbBg = (customFallbacks && customFallbacks.bg) || (isDark ? '#111114' : '#F7F5F0');
-      const fbFg = (customFallbacks && customFallbacks.fg) || (isDark ? '#FAFAFA' : '#1F1E1D');
-      const bgHex = resolveCssColorToHex6('--sidebar', targetEl, fbBg);
-      const fgHex = resolveCssColorToHex6('--foreground', targetEl, fbFg);
+      const curPreset = document.documentElement ? document.documentElement.getAttribute('data-ag-preset') : '';
+      const curDarkPreset = document.documentElement ? document.documentElement.getAttribute('data-ag-dark-preset') : '';
+      const defaultLightBg =
+        curPreset === 'native'
+          ? '#FAFAFA'
+          : curPreset === 'absolutely'
+            ? '#F7F5F0'
+            : curPreset === 'vintage-deep'
+              ? '#E3D9C8'
+              : curPreset === 'claude-desktop-purewhite'
+                ? '#EFECE5'
+                : '#E8E3D9';
+      const defaultDarkBg =
+        curPreset === 'native' ? '#131313' : curDarkPreset === 'claude-warm' ? '#1B1A18' : '#101417';
+      const defaultLightFg =
+        curPreset === 'native'
+          ? '#0A0A0C'
+          : curPreset === 'absolutely' || curPreset === 'claude-desktop-purewhite'
+            ? '#1F1E1D'
+            : curPreset === 'vintage-deep'
+              ? '#26221C'
+              : '#24221F';
+      const defaultDarkFg =
+        curPreset === 'native' ? '#FAFAFA' : curDarkPreset === 'claude-warm' ? '#F3F0E4' : '#E4E8E9';
+      const fbBg = (customFallbacks && customFallbacks.bg) || (isDark ? defaultDarkBg : defaultLightBg);
+      const fbFg = (customFallbacks && customFallbacks.fg) || (isDark ? defaultDarkFg : defaultLightFg);
+      // Windows 11 TitleBarOverlay 物理位于顶栏菜单条最右侧：优先读取顶栏容器实色，其次读侧栏实色，最后回落 CSS 变量与全预设色表
+      const menuItem = document.querySelector('[data-testid="title-menu-bar-item"]');
+      const titleBarEl = menuItem && menuItem.closest ? menuItem.closest('.bg-sidebar, header') : null;
+      const sidebarEl = document.querySelector('[data-testid="conversation-list-sidebar"]');
+      const titleBarBgHex = titleBarEl ? parseColorToHex6(getComputedStyle(titleBarEl).backgroundColor) : null;
+      const sidebarBgHex = sidebarEl ? parseColorToHex6(getComputedStyle(sidebarEl).backgroundColor) : null;
+      const directFgHex = parseColorToHex6(getComputedStyle(targetEl).color);
+      const bgHex = titleBarBgHex || sidebarBgHex || resolveCssColorToHex6('--sidebar', targetEl, fbBg);
+      const fgHex = directFgHex || resolveCssColorToHex6('--foreground', targetEl, fbFg);
       const sig = bgHex + '|' + fgHex;
       if (force || window.__ag_last_overlay_sig !== sig) {
         window.__ag_last_overlay_sig = sig;
@@ -477,9 +622,9 @@
       const targetEl = document.body || document.documentElement;
       if (!targetEl || typeof getComputedStyle !== 'function') return;
       const cs = getComputedStyle(targetEl);
-      let hex = resolveCssColorToHex6('--background', targetEl, null);
+      let hex = parseColorToHex6(cs.backgroundColor);
       if (!hex) {
-        hex = parseColorToHex6(cs.backgroundColor);
+        hex = resolveCssColorToHex6('--background', targetEl, null);
       }
       if (hex && (force || window.__ag_last_curtain_hex !== hex)) {
         window.__ag_last_curtain_hex = hex;
@@ -490,8 +635,14 @@
 
   // 若用户在 user/config.json 中将 enabled 设为 false，执行无损卸载还原
   if (!ENABLED) {
+    const s0f = document.getElementById('ag-font-faces');
+    if (s0f) s0f.remove();
     const s1 = document.getElementById('ag-custom-fonts');
     if (s1) s1.remove();
+    const s1w = document.getElementById('ag-ui-widgets');
+    if (s1w) s1w.remove();
+    const s1v = document.getElementById('ag-user-theme-vars');
+    if (s1v) s1v.remove();
     const s2 = document.getElementById('antigravity-user-custom-style');
     if (s2) s2.remove();
     const sSwarmFont = document.getElementById('ag-swarm-google-fonts');
@@ -519,6 +670,7 @@
     window.__ag_watched_cascade_id = '';
     window.__ag_watched_cascade_sig = '';
     window.__ag_last_metrics = null;
+    cleanupTokenAnalyticsDom();
     const themeBtnTt = document.getElementById('ag-theme-btn-tooltip');
     if (themeBtnTt) themeBtnTt.remove();
     if (window.__ag_theme_btn_tt_timer) {
@@ -540,16 +692,95 @@
       window.__ag_appearance_btn_attr_observer = null;
     }
     try {
-      document.querySelectorAll('button[data-ag-warm-night-btn]').forEach((el) => el.remove());
+      document.querySelectorAll('[data-ag-lang-row="1"]').forEach((el) => el.remove());
+      if (document.documentElement) document.documentElement.removeAttribute('data-ag-lang');
+      document.querySelectorAll('button[data-ag-warm-night-btn], button[data-ag-morandi-btn]').forEach((el) => el.remove());
+      document.querySelectorAll('svg[data-ag-agy-logo="1"], svg[data-ag-claude-spark="1"]').forEach((el) => el.remove());
+      document.querySelectorAll('button[data-ag-native-theme-slot="system"]').forEach((btn) => {
+        btn.removeAttribute('data-ag-grad-id');
+        if (typeof btn.__ag_orig_sys_aria === 'string') {
+          if (btn.__ag_orig_sys_aria) btn.setAttribute('aria-label', btn.__ag_orig_sys_aria);
+          else btn.removeAttribute('aria-label');
+        }
+      });
+      document.querySelectorAll('button[data-ag-native-theme-slot="light"]').forEach((btn) => {
+        if (typeof btn.__ag_orig_light_aria === 'string') {
+          if (btn.__ag_orig_light_aria) btn.setAttribute('aria-label', btn.__ag_orig_light_aria);
+          else btn.removeAttribute('aria-label');
+        }
+      });
+      document.querySelectorAll('button[data-ag-native-theme-slot="dark"]').forEach((btn) => {
+        if (typeof btn.__ag_orig_dark_aria === 'string') {
+          if (btn.__ag_orig_dark_aria) btn.setAttribute('aria-label', btn.__ag_orig_dark_aria);
+          else btn.removeAttribute('aria-label');
+        }
+      });
       document.querySelectorAll('[data-ag-theme-toggle-group]').forEach((g) => {
         g.removeAttribute('data-ag-theme-toggle-group');
+        g.removeAttribute('data-ag-active-slot');
         g.removeAttribute('data-ag-active-night');
+        g.removeAttribute('data-ag-active-light');
+        g.removeAttribute('data-ag-active-native');
       });
       document.querySelectorAll('[data-ag-native-theme-slot]').forEach((b) => {
         b.removeAttribute('data-ag-native-theme-slot');
       });
     } catch (e) {}
+    if (window.__ag_tt_guard_interval) {
+      try {
+        clearInterval(window.__ag_tt_guard_interval);
+      } catch (e) {}
+      window.__ag_tt_guard_interval = null;
+    }
+    window.__ag_tt_suppressed_btn = null;
+    if (document.documentElement && document.documentElement.hasAttribute('data-ag-suppress-native-tt')) {
+      document.documentElement.removeAttribute('data-ag-suppress-native-tt');
+    }
+    window.__ag_tt_global_dismiss_fn = null;
+    window.__ag_tt_global_dismiss_v2_fn = null;
+    if (window.__ag_surface_sync_raf) {
+      try {
+        cancelAnimationFrame(window.__ag_surface_sync_raf);
+      } catch (e) {}
+      window.__ag_surface_sync_raf = null;
+    }
+    if (window.__ag_mode_obs_raf) {
+      try {
+        cancelAnimationFrame(window.__ag_mode_obs_raf);
+      } catch (e) {}
+      window.__ag_mode_obs_raf = null;
+    }
+    if (window.__ag_mode_obs_timer) {
+      try {
+        clearTimeout(window.__ag_mode_obs_timer);
+      } catch (e) {}
+      window.__ag_mode_obs_timer = null;
+    }
+    if (window.__ag_appearance_scan_raf) {
+      try {
+        cancelAnimationFrame(window.__ag_appearance_scan_raf);
+      } catch (e) {}
+      window.__ag_appearance_scan_raf = null;
+    }
+    if (window.__ag_appearance_scan_timer) {
+      try {
+        clearTimeout(window.__ag_appearance_scan_timer);
+      } catch (e) {}
+      window.__ag_appearance_scan_timer = null;
+    }
+    if (window.__ag_persist_preset_timer) {
+      try {
+        clearTimeout(window.__ag_persist_preset_timer);
+      } catch (e) {}
+      window.__ag_persist_preset_timer = null;
+    }
+    window.__ag_pending_persist_map = null;
     window.__ag_set_dark_preset_fn = null;
+    window.__ag_set_light_preset_fn = null;
+    window.__ag_set_host_light_preset = null;
+    window.__ag_handle_native_theme_btn_click = null;
+    window.__ag_handle_native_theme_btn_hover = null;
+    window.__ag_handle_custom_theme_btn_click = null;
     window.__ag_sync_warm_night_btn_fn = null;
     window.__ag_ensure_warm_night_btn_fn = null;
     if (window.__ag_i18n_observer) {
@@ -610,9 +841,11 @@
     window.__ag_sync_preset_fn = null;
     window.__ag_host_theme_mode = null;
     window.__ag_host_dark_preset = null;
+    window.__ag_host_light_preset = null;
     window.__ag_set_host_theme_mode = null;
     window.__ag_set_host_dark_preset = null;
     window.__ag_resolved_theme_mode = null;
+    window.__ag_last_surface_sync_key = '';
     window.__ag_body_ready = false;
     applyThemeVars({}, {});
     document.documentElement.removeAttribute('data-ag-preset');
@@ -620,6 +853,7 @@
     document.documentElement.removeAttribute('data-ag-theme-mode');
     document.documentElement.removeAttribute('data-ag-page-type');
     document.documentElement.removeAttribute('data-ag-wax-seal');
+    document.documentElement.removeAttribute('data-ag-suppress-native-tt');
     document.documentElement.removeAttribute('data-ag-os');
     const restoreNativeSurfaces = () => {
       syncCurtainSurfaceColor(true);
@@ -703,11 +937,32 @@
 
   const legacySwarmFont = document.getElementById('ag-swarm-google-fonts');
   if (legacySwarmFont) legacySwarmFont.remove();
-  if (
-    headTarget &&
-    !document.getElementById('agy-new-themes-fonts') &&
-    !document.getElementById('ag-google-sans-flex-fonts')
-  ) {
+
+  function hasNativeGoogleSansFlexStylesheet() {
+    if (document.getElementById('agy-new-themes-fonts')) return true;
+    if (!document.querySelectorAll) return false;
+    const links = document.querySelectorAll('link[rel="stylesheet"][href*="fonts.googleapis.com"]');
+    for (let i = 0; i < links.length; i++) {
+      const lnk = links[i];
+      if (lnk.id === 'ag-google-sans-flex-fonts') continue;
+      const href = String(lnk.getAttribute('href') || '');
+      if (href.includes('Google+Sans+Flex') || href.includes('Google%20Sans%20Flex')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function dedupFallbackGoogleFontsLink() {
+    if (MODULES.googleFonts === false || hasNativeGoogleSansFlexStylesheet()) {
+      const dupGsf = document.getElementById('ag-google-sans-flex-fonts');
+      if (dupGsf) dupGsf.remove();
+      return true;
+    }
+    return false;
+  }
+
+  if (!dedupFallbackGoogleFontsLink() && headTarget && !document.getElementById('ag-google-sans-flex-fonts')) {
     try {
       const gfLink = document.createElement('link');
       gfLink.id = 'ag-google-sans-flex-fonts';
@@ -723,14 +978,62 @@
     } catch (e) {}
   }
 
+  // 三段式物理隔离：
+  // 1) #ag-font-faces（纯 @font-face 注册表，常驻永不 disabled，杜绝切换时销毁重建 CSSFontFace / Skia 字形纹理缓存引发的缺字空白）
+  // 2) #ag-custom-fonts（纯主题色彩与字体选择器规则，点「原版配色」时一键 disabled=true 零开销退回原版）
+  // 3) #ag-ui-widgets（五段式胶囊按钮、底部圆环小胶囊、Token 统计面板，常驻在线）
+  const THEME_RULES_SPLIT_MARKER = '/* __AG_THEME_RULES_START__ */';
+  const WIDGETS_CSS_SPLIT_MARKER = '/* __AG_WIDGETS_CSS_START__ */';
+  const rulesSplitIdx = CSS_TEXT.indexOf(THEME_RULES_SPLIT_MARKER);
+  const widgetsSplitIdx = CSS_TEXT.indexOf(WIDGETS_CSS_SPLIT_MARKER);
+  const FONT_FACES_ONLY_CSS = rulesSplitIdx >= 0 ? CSS_TEXT.slice(0, rulesSplitIdx) : '';
+  const THEME_ONLY_CSS =
+    rulesSplitIdx >= 0
+      ? widgetsSplitIdx >= 0
+        ? CSS_TEXT.slice(rulesSplitIdx, widgetsSplitIdx)
+        : CSS_TEXT.slice(rulesSplitIdx)
+      : widgetsSplitIdx >= 0
+        ? CSS_TEXT.slice(0, widgetsSplitIdx)
+        : CSS_TEXT;
+  const WIDGETS_ONLY_CSS = widgetsSplitIdx >= 0 ? CSS_TEXT.slice(widgetsSplitIdx) : '';
+
+  if (FONT_FACES_ONLY_CSS) {
+    let ffStyle = document.getElementById('ag-font-faces');
+    if (!ffStyle) {
+      ffStyle = document.createElement('style');
+      ffStyle.id = 'ag-font-faces';
+      if (headTarget) headTarget.appendChild(ffStyle);
+    }
+    if (ffStyle.textContent !== FONT_FACES_ONLY_CSS) {
+      ffStyle.textContent = FONT_FACES_ONLY_CSS;
+    }
+    if (ffStyle.disabled) ffStyle.disabled = false;
+  }
+
   let style = document.getElementById('ag-custom-fonts');
   if (!style) {
     style = document.createElement('style');
     style.id = 'ag-custom-fonts';
     if (headTarget) headTarget.appendChild(style);
   }
-  if (style && style.textContent !== CSS_TEXT) {
-    style.textContent = CSS_TEXT;
+  if (style && style.textContent !== THEME_ONLY_CSS) {
+    style.textContent = THEME_ONLY_CSS;
+    window.__ag_style_rev = (window.__ag_style_rev || 0) + 1;
+  }
+
+  let widgetStyle = document.getElementById('ag-ui-widgets');
+  if (WIDGETS_ONLY_CSS) {
+    if (!widgetStyle) {
+      widgetStyle = document.createElement('style');
+      widgetStyle.id = 'ag-ui-widgets';
+      if (headTarget) headTarget.appendChild(widgetStyle);
+    }
+    if (widgetStyle.textContent !== WIDGETS_ONLY_CSS) {
+      widgetStyle.textContent = WIDGETS_ONLY_CSS;
+      window.__ag_style_rev = (window.__ag_style_rev || 0) + 1;
+    }
+  } else if (widgetStyle) {
+    widgetStyle.remove();
   }
 
   document.documentElement.setAttribute('data-ag-wax-seal', MODULES.composerWaxSeal === false ? 'off' : 'on');
@@ -747,12 +1050,44 @@
     }
     if (userStyle.textContent !== CUSTOM_CSS_TEXT) {
       userStyle.textContent = CUSTOM_CSS_TEXT;
+      window.__ag_style_rev = (window.__ag_style_rev || 0) + 1;
     }
   } else if (userStyle) {
     userStyle.remove();
+    window.__ag_style_rev = (window.__ag_style_rev || 0) + 1;
+  }
+
+  function syncThemeStyleSheetEnabled(isNative) {
+    const off = !!isNative;
+    const sheetIds = ['ag-custom-fonts', 'ag-user-theme-vars', 'antigravity-user-custom-style'];
+    for (let i = 0; i < sheetIds.length; i++) {
+      const el = document.getElementById(sheetIds[i]);
+      if (!el) continue;
+      if (el.disabled !== off) el.disabled = off;
+      if (el.sheet && el.sheet.disabled !== off) {
+        try {
+          el.sheet.disabled = off;
+        } catch (e) {}
+      }
+    }
+    // 始终保持 Google Sans Flex 字体定义常驻，切勿翻转 @font-face 样式表的 disabled 状态以防清空 Skia 字形纹理缓存
+    const gsfFallback = document.getElementById('ag-google-sans-flex-fonts');
+    if (gsfFallback && gsfFallback.disabled) {
+      gsfFallback.disabled = false;
+    }
+    if (off) {
+      document.documentElement.setAttribute('data-ag-wax-seal', 'off');
+      document.documentElement.removeAttribute('data-ag-custom-font-size');
+    } else {
+      document.documentElement.setAttribute('data-ag-wax-seal', MODULES.composerWaxSeal === false ? 'off' : 'on');
+      if (THEME_VARS && THEME_VARS['--ag-chat-font-size']) {
+        document.documentElement.setAttribute('data-ag-custom-font-size', 'true');
+      }
+    }
   }
 
   function ensureStylesAtEndOfHead() {
+    dedupFallbackGoogleFontsLink();
     const h = document.head || document.getElementsByTagName('head')[0];
     if (!h) return;
     const base = document.getElementById('ag-custom-fonts');
@@ -761,6 +1096,8 @@
     if (!needsMove) {
       for (let sib = base.nextElementSibling; sib; sib = sib.nextElementSibling) {
         if (
+          sib.id !== 'ag-font-faces' &&
+          sib.id !== 'ag-ui-widgets' &&
           sib.id !== 'ag-user-theme-vars' &&
           sib.id !== 'antigravity-user-custom-style' &&
           (sib.tagName === 'LINK' || sib.tagName === 'STYLE')
@@ -771,10 +1108,13 @@
       }
     }
     if (needsMove) {
-      for (const id of ['ag-custom-fonts', 'ag-user-theme-vars', 'antigravity-user-custom-style']) {
+      // 注意：切勿移动常驻的 #ag-font-faces，防止重建 CSSFontFace 实例
+      for (const id of ['ag-custom-fonts', 'ag-ui-widgets', 'ag-user-theme-vars', 'antigravity-user-custom-style']) {
         const el = document.getElementById(id);
         if (el) h.appendChild(el);
       }
+      // 节点移动会触发 Chromium 重建 CSSStyleSheet 实例并重置 disabled=false，立即回锁状态
+      syncThemeStyleSheetEnabled(document.documentElement.getAttribute('data-ag-preset') === 'native');
     }
   }
   ensureStylesAtEndOfHead();
@@ -798,7 +1138,7 @@
     }
   };
 
-  if (!window.__ag_settings_guard_installed) {
+  if (!IS_SWARM_PLUGIN_FRAME && !window.__ag_settings_guard_installed) {
     window.__ag_settings_guard_installed = true;
     document.addEventListener(
       'click',
@@ -1276,15 +1616,17 @@
 
   if (!window.__ag_zoom_guard_installed) {
     window.__ag_zoom_guard_installed = true;
-    window.addEventListener(
-      'resize',
-      () => {
-        if (typeof window.__ag_zoom_resize_fn === 'function') {
-          window.__ag_zoom_resize_fn();
-        }
-      },
-      { passive: true }
-    );
+    if (!IS_SWARM_PLUGIN_FRAME) {
+      window.addEventListener(
+        'resize',
+        () => {
+          if (typeof window.__ag_zoom_resize_fn === 'function') {
+            window.__ag_zoom_resize_fn();
+          }
+        },
+        { passive: true }
+      );
+    }
     window.addEventListener(
       'keydown',
       (e) => {
@@ -1300,6 +1642,9 @@
   // 3. 专属色彩预设状态联动（支持 user/config.json 热重载切换）与防白屏崩溃保护
   // ============================================================================
   const PRESETS = {
+    NATIVE: 'native',
+    MORANDI: 'morandi',
+    ABSOLUTELY: 'absolutely',
     HIGH_CONTRAST: 'high-contrast',
     CLAUDE_PUREWHITE: 'claude-desktop-purewhite',
     VINTAGE_DEEP: 'vintage-deep',
@@ -1315,11 +1660,54 @@
 
   const ALL_CUSTOM_PRESET_NAMES = new Set(Object.values(PRESETS));
 
-  // 当用户在 user/config.json 中修改了 preset / darkPreset 时，同步刷新 localStorage 中的预设标记
-  if (DEFAULT_PRESET && window.__ag_last_boot_preset !== DEFAULT_PRESET) {
-    window.__ag_last_boot_preset = DEFAULT_PRESET;
+  function resolveNormalizedLightPreset(rawVal) {
+    const s = String(rawVal || '').trim().toLowerCase();
+    if (s === PRESETS.NATIVE || s === 'stock' || s === 'original' || s === '原版配色') {
+      return PRESETS.NATIVE;
+    }
+    if (s === PRESETS.ABSOLUTELY || s === 'claude-orange' || s === 'absolutely!' || s === 'absolutely！') {
+      return PRESETS.ABSOLUTELY;
+    }
+    if (s === PRESETS.CLAUDE_PUREWHITE || s === PRESETS.LEGACY_OFFICIAL || s === 'claudedesktop 净白') {
+      return PRESETS.CLAUDE_PUREWHITE;
+    }
+    if (s === PRESETS.VINTAGE_DEEP || s === PRESETS.LEGACY_CHUANBAN || s === '复古深色') {
+      return PRESETS.VINTAGE_DEEP;
+    }
+    return PRESETS.MORANDI;
+  }
+
+  if (!window.__ag_last_non_native_light) {
     try {
-      Storage.prototype.setItem.call(localStorage, 'theme-color-flavor', DEFAULT_PRESET);
+      const savedNonNative = Storage.prototype.getItem.call(localStorage, 'theme-last-non-native-light');
+      if (savedNonNative) {
+        const normSaved = resolveNormalizedLightPreset(savedNonNative);
+        if (normSaved !== PRESETS.NATIVE) {
+          window.__ag_last_non_native_light = normSaved;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 当用户在 user/config.json 中修改了 preset / darkPreset 时，同步刷新 localStorage 中的预设标记（跳过处于防抖待提交窗口内的页面防回滚）
+  const hasPendingLightPersist =
+    !!window.__ag_persist_preset_timer ||
+    !!(window.__ag_pending_persist_map && window.__ag_pending_persist_map.light !== undefined);
+  const hasPendingDarkPersist =
+    !!window.__ag_persist_preset_timer ||
+    !!(window.__ag_pending_persist_map && window.__ag_pending_persist_map.dark !== undefined);
+
+  const effectiveBootLightPreset = resolveNormalizedLightPreset(
+    IS_SWARM_PLUGIN_FRAME && window.__ag_host_light_preset ? window.__ag_host_light_preset : DEFAULT_PRESET
+  );
+  if (effectiveBootLightPreset !== PRESETS.NATIVE && !window.__ag_last_non_native_light) {
+    window.__ag_last_non_native_light = effectiveBootLightPreset;
+  }
+  if (!hasPendingLightPersist && effectiveBootLightPreset && window.__ag_last_boot_preset !== effectiveBootLightPreset) {
+    window.__ag_last_boot_preset = effectiveBootLightPreset;
+    window.__ag_runtime_light_preset = effectiveBootLightPreset;
+    try {
+      Storage.prototype.setItem.call(localStorage, 'theme-color-flavor', effectiveBootLightPreset);
     } catch (e) {}
   }
   const effectiveBootDarkPreset =
@@ -1327,7 +1715,7 @@
     (window.__ag_host_dark_preset === DARK_PRESETS.CLAUDE_WARM || window.__ag_host_dark_preset === DARK_PRESETS.ONYX)
       ? window.__ag_host_dark_preset
       : DEFAULT_DARK_PRESET;
-  if (effectiveBootDarkPreset && window.__ag_last_boot_dark_preset !== effectiveBootDarkPreset) {
+  if (!hasPendingDarkPersist && effectiveBootDarkPreset && window.__ag_last_boot_dark_preset !== effectiveBootDarkPreset) {
     window.__ag_last_boot_dark_preset = effectiveBootDarkPreset;
     window.__ag_runtime_dark_preset = effectiveBootDarkPreset;
     try {
@@ -1349,6 +1737,8 @@
   }
 
   let lastSyncedHostMode = null;
+  const darkColorSchemeMql =
+    typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   function syncChuanbanPreset() {
     try {
@@ -1365,26 +1755,31 @@
         } catch (e) {}
       }
 
+      const liveHostLightPreset =
+        IS_SWARM_PLUGIN_FRAME && window.__ag_host_light_preset ? window.__ag_host_light_preset : null;
       const flavor =
-        Storage.prototype.getItem.call(localStorage, 'theme-color-flavor') || DEFAULT_PRESET || PRESETS.HIGH_CONTRAST;
+        liveHostLightPreset ||
+        window.__ag_runtime_light_preset ||
+        Storage.prototype.getItem.call(localStorage, 'theme-color-flavor') ||
+        DEFAULT_PRESET ||
+        PRESETS.MORANDI;
 
-      let targetPreset = PRESETS.HIGH_CONTRAST;
-      if (flavor === PRESETS.HIGH_CONTRAST || flavor === PRESETS.LEGACY_WARM_WHITE || flavor === '高对比版') {
-        targetPreset = PRESETS.HIGH_CONTRAST;
-      } else if (
-        flavor === PRESETS.CLAUDE_PUREWHITE ||
-        flavor === PRESETS.LEGACY_OFFICIAL ||
-        flavor === 'ClaudeDesktop 净白'
-      ) {
-        targetPreset = PRESETS.CLAUDE_PUREWHITE;
-      } else if (flavor === PRESETS.VINTAGE_DEEP || flavor === PRESETS.LEGACY_CHUANBAN || flavor === '复古深色') {
-        targetPreset = PRESETS.VINTAGE_DEEP;
-      }
+      const targetPreset = resolveNormalizedLightPreset(flavor);
 
       const prevPreset = document.documentElement.getAttribute('data-ag-preset');
-      if (prevPreset !== targetPreset) {
+      const lightPresetChanged = prevPreset !== targetPreset;
+      if (lightPresetChanged) {
         document.documentElement.setAttribute('data-ag-preset', targetPreset);
       }
+      if (targetPreset !== PRESETS.NATIVE) {
+        if (window.__ag_last_non_native_light !== targetPreset) {
+          window.__ag_last_non_native_light = targetPreset;
+          try {
+            Storage.prototype.setItem.call(localStorage, 'theme-last-non-native-light', targetPreset);
+          } catch (e) {}
+        }
+      }
+      syncThemeStyleSheetEnabled(targetPreset === PRESETS.NATIVE);
 
       let storedDarkFlavor = null;
       try {
@@ -1408,9 +1803,7 @@
       const bodyEl = document.body;
       const htmlDataTheme = htmlEl ? htmlEl.getAttribute('data-theme') : null;
       const hostThemeMode = boot.hostThemeMode || null;
-      const systemPrefersDark = !!(
-        typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
-      );
+      const systemPrefersDark = !!(darkColorSchemeMql && darkColorSchemeMql.matches);
       let isDark = false;
       if (IS_SWARM_PLUGIN_FRAME) {
         // 优先级：1) daemon 从宿主 page 实时同步的 __ag_host_theme_mode（解决系统跟随/隐藏预加载/陈旧内联样式不同步）；
@@ -1446,6 +1839,57 @@
         if (htmlEl && htmlEl.style.colorScheme !== swarmMode) {
           htmlEl.style.colorScheme = swarmMode;
           window.__ag_swarm_owned_cs = true;
+        }
+        // 当 Swarm 看板在莫兰迪/自定义主题下首次挂载时，宿主会将父窗口补丁配色快照写入 iframe 的 html.style inline 变量；
+        // 切回「原版配色 (native)」后若不清理这些被补丁污染的 inline 变量，Swarm 会卡死在莫兰迪底色无法回归原版。
+        if (htmlEl && targetPreset === PRESETS.NATIVE) {
+          const curInlineBg = (htmlEl.style.getPropertyValue('--background') || '').trim().toUpperCase();
+          const curInlineFont = (htmlEl.style.getPropertyValue('--editor-font-family') || '').trim();
+          const PATCH_SWARM_BGS = new Set([
+            '#F4F1EA',
+            '#FCFCFB',
+            '#EFE8DC',
+            '#F8F6F1',
+            '#F3EAD8',
+            '#F8F7F4',
+            '#15191C',
+            '#242320',
+            '#21201D',
+            '#1B1A18'
+          ]);
+          if (PATCH_SWARM_BGS.has(curInlineBg) || /Anthropic Mono/i.test(curInlineFont)) {
+            const propsToClear = [];
+            for (let i = 0; i < htmlEl.style.length; i++) {
+              const prop = htmlEl.style[i];
+              if (prop && prop.startsWith('--')) propsToClear.push(prop);
+            }
+            for (let i = 0; i < propsToClear.length; i++) {
+              htmlEl.style.removeProperty(propsToClear[i]);
+            }
+            if (isDark) {
+              const nativeDarkVars = {
+                '--background': '#131313',
+                '--foreground': '#FAFAFA',
+                '--content': '#131313',
+                '--card': '#1C1C1E',
+                '--sidebar': '#18181A',
+                '--border': 'rgba(255, 255, 255, 0.12)',
+                '--card-border': 'rgba(255, 255, 255, 0.12)',
+                '--secondary': 'rgba(255, 255, 255, 0.08)',
+                '--secondary-foreground': '#E4E4E7',
+                '--muted': 'rgba(255, 255, 255, 0.06)',
+                '--muted-foreground': '#A1A1AA',
+                '--primary': '#2F71E3',
+                '--primary-foreground': '#FFFFFF',
+                '--accent': '#2F71E3',
+                '--vscode-editor-background': '#131313',
+                '--vscode-foreground': '#FAFAFA'
+              };
+              for (const [k, v] of Object.entries(nativeDarkVars)) {
+                htmlEl.style.setProperty(k, v);
+              }
+            }
+          }
         }
       } else {
         const bodyExplicitDark = !!(
@@ -1502,6 +1946,7 @@
         document.documentElement.setAttribute('data-ag-theme-mode', targetMode);
       }
       window.__ag_resolved_theme_mode = targetMode;
+      dedupFallbackGoogleFontsLink();
       if (!IS_SWARM_PLUGIN_FRAME && lastSyncedHostMode !== targetMode) {
         lastSyncedHostMode = targetMode;
         if (typeof window.__agSyncHostThemeMode === 'function') {
@@ -1510,8 +1955,30 @@
           } catch (e) {}
         }
       }
-      syncWinTitleBarOverlay(isDark, darkPresetChanged);
-      syncCurtainSurfaceColor(darkPresetChanged);
+      const bodyStateFlag = bodyEl ? (bodyEl.hasAttribute('data-agy-theme') || bodyEl.hasAttribute('data-newux-theme') ? 2 : 1) : 0;
+      const surfaceForce = darkPresetChanged || lightPresetChanged;
+      const surfaceSyncKey = `${targetMode}|${targetPreset}|${targetDarkPreset}|${bodyStateFlag}|${window.__ag_style_rev || 0}`;
+      if (surfaceForce || window.__ag_last_surface_sync_key !== surfaceSyncKey) {
+        if (bodyEl) {
+          window.__ag_last_surface_sync_key = surfaceSyncKey;
+        }
+        window.__ag_pending_surface_dark = isDark;
+        window.__ag_pending_surface_force = !!(window.__ag_pending_surface_force || surfaceForce);
+        if (!window.__ag_surface_sync_raf && typeof requestAnimationFrame === 'function') {
+          window.__ag_surface_sync_raf = requestAnimationFrame(() => {
+            window.__ag_surface_sync_raf = null;
+            const dFlag = !!window.__ag_pending_surface_dark;
+            const fFlag = !!window.__ag_pending_surface_force;
+            window.__ag_pending_surface_force = false;
+            syncWinTitleBarOverlay(dFlag, fFlag);
+            syncCurtainSurfaceColor(fFlag);
+          });
+        } else if (typeof requestAnimationFrame !== 'function') {
+          window.__ag_pending_surface_force = false;
+          syncWinTitleBarOverlay(isDark, surfaceForce);
+          syncCurtainSurfaceColor(surfaceForce);
+        }
+      }
       if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
         window.__ag_sync_warm_night_btn_fn();
       }
@@ -1527,6 +1994,13 @@
     }
   };
   window.__ag_set_host_dark_preset = (nextDarkPreset) => {
+    if (
+      !IS_SWARM_PLUGIN_FRAME &&
+      window.__ag_pending_persist_map &&
+      window.__ag_pending_persist_map.dark !== undefined
+    ) {
+      return;
+    }
     window.__ag_runtime_dark_preset = resolveNormalizedDarkPreset(nextDarkPreset);
     if (IS_SWARM_PLUGIN_FRAME) {
       window.__ag_host_dark_preset = window.__ag_runtime_dark_preset;
@@ -1536,6 +2010,50 @@
     } catch (e) {}
     if (typeof window.__ag_sync_preset_fn === 'function') {
       window.__ag_sync_preset_fn();
+    }
+  };
+  window.__ag_set_host_light_preset = (nextLightPreset) => {
+    if (
+      !IS_SWARM_PLUGIN_FRAME &&
+      window.__ag_pending_persist_map &&
+      window.__ag_pending_persist_map.light !== undefined
+    ) {
+      return;
+    }
+    window.__ag_runtime_light_preset = resolveNormalizedLightPreset(nextLightPreset);
+    if (IS_SWARM_PLUGIN_FRAME) {
+      window.__ag_host_light_preset = window.__ag_runtime_light_preset;
+    }
+    try {
+      Storage.prototype.setItem.call(localStorage, 'theme-color-flavor', window.__ag_runtime_light_preset);
+    } catch (e) {}
+    if (typeof window.__ag_sync_preset_fn === 'function') {
+      window.__ag_sync_preset_fn();
+    }
+  };
+  window.__ag_set_host_ui_lang = (nextUiLang) => {
+    if (
+      !IS_SWARM_PLUGIN_FRAME &&
+      window.__ag_pending_persist_map &&
+      window.__ag_pending_persist_map.uiLang !== undefined
+    ) {
+      return;
+    }
+    const norm = !HAS_LOCALE_PACK || String(nextUiLang || '').trim().toLowerCase() === 'en' ? 'en' : 'target';
+    window.__ag_host_ui_lang = norm;
+    if (typeof window.__ag_set_ui_lang_fn === 'function') {
+      window.__ag_set_ui_lang_fn(norm, false);
+    } else {
+      window.__ag_runtime_ui_lang = norm;
+      if (document.documentElement) {
+        document.documentElement.setAttribute('data-ag-lang', isUiEnglish() ? 'en' : INSTALLED_LOCALE);
+      }
+      if (typeof window.__ag_apply_i18n_dom_state === 'function') {
+        window.__ag_apply_i18n_dom_state();
+      }
+      if (typeof window.__ag_refresh_self_ui_lang === 'function') {
+        window.__ag_refresh_self_ui_lang();
+      }
     }
   };
 
@@ -1583,13 +2101,36 @@
     } catch (e) {}
     window.__ag_theme_mode_observer = null;
   }
+  if (window.__ag_mode_obs_raf) {
+    try {
+      cancelAnimationFrame(window.__ag_mode_obs_raf);
+    } catch (e) {}
+    window.__ag_mode_obs_raf = null;
+  }
+  if (window.__ag_mode_obs_timer) {
+    try {
+      clearTimeout(window.__ag_mode_obs_timer);
+    } catch (e) {}
+    window.__ag_mode_obs_timer = null;
+  }
   if (typeof MutationObserver !== 'undefined') {
     try {
-      const modeObs = new MutationObserver(() => {
-        if (typeof window.__ag_sync_preset_fn === 'function') {
-          window.__ag_sync_preset_fn();
+      const scheduleModeSync = () => {
+        if (document.hidden || typeof requestAnimationFrame !== 'function') {
+          if (!window.__ag_mode_obs_timer) {
+            window.__ag_mode_obs_timer = setTimeout(() => {
+              window.__ag_mode_obs_timer = null;
+              if (typeof window.__ag_sync_preset_fn === 'function') window.__ag_sync_preset_fn();
+            }, 0);
+          }
+        } else if (!window.__ag_mode_obs_raf) {
+          window.__ag_mode_obs_raf = requestAnimationFrame(() => {
+            window.__ag_mode_obs_raf = null;
+            if (typeof window.__ag_sync_preset_fn === 'function') window.__ag_sync_preset_fn();
+          });
         }
-      });
+      };
+      const modeObs = new MutationObserver(scheduleModeSync);
       if (document.body) {
         modeObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
       }
@@ -1626,7 +2167,45 @@
     const MENU_BOOK_SVG_PATH =
       'M557.69-570.15v-52.61q32.62-15.15 68.27-22.73T700-653.08q24.08,0 46.77,3.42t45.54,9.04v50.15q-22.46-7.85-44.65-11.38T700-605.39q-38.38,0-74.35,9.12t-67.96,26.12Zm0,219.23v-53.38q31.85-15.15 68.08-22.73T700-434.61q24.08,0 46.77,3.42t45.54,9.04V-372q-22.46-7.85-44.65-11.38T700-386.92q-38.38,0-74.35,9.19t-67.96,26.81Zm0-109.23v-53.38q32.62-15.15 68.27-22.73T700-543.85q24.08,0 46.77,3.42t45.54,9.04v50.15q-22.46-7.85-44.65-11.38T700-496.15q-38.38,0-74.35,9.5t-67.96,26.5ZM260-319.23q49.69,0 96.69,11.27T450-272.61V-665.85q-42.15-27.46-91.23-41.19T260-720.77q-36,0-67.27,5.65t-64.27,18.5q-4.62,1.54-6.54,4.42T120-685.85v378.31q0,5.39 3.85,7.89t8.46,0.58q28.46-9.69 60.08-14.92T260-319.23Zm250,46.62q46.31-24.08 93.31-35.35T700-319.23q36,0 67.62,5.23t60.08,14.92q4.62,1.92 8.46-0.58t3.85-7.89V-685.85q0-3.46-1.92-6.15t-6.54-4.62q-33-12.85-64.27-18.5T700-720.77q-49.69,0-98.77,13.73T510-665.85v393.23Zm-30,88q-48.38-35.69-104.38-55.15T260-259.23q-36.61,0-71.92,8.12T120-227.23q-21.38,9.85-40.69-3.12T60-267.08v-434.3q0-12.92 6.65-24.27T85.85-742q40.61-19.77 84.65-29.27t89.5-9.5q58.38,0 114.08,15.96T480-717.69q50.23-31.15 105.92-47.12T700-780.77q45.46,0 89.5,9.5T874.15-742q12.54,5 19.19,16.35T900-701.38v434.3q0,23.77-20.08,36.35T837.69-228q-32.38-15.38-67.11-23.31T700-259.23q-59.62,0-115.62,19.46T480-184.62ZM285-496.69Z';
 
-    function hideThemeBtnTooltip() {
+    function releaseNativeTooltipSuppress() {
+      if (window.__ag_tt_guard_interval) {
+        try {
+          clearInterval(window.__ag_tt_guard_interval);
+        } catch (e) {}
+        window.__ag_tt_guard_interval = null;
+      }
+      window.__ag_tt_suppressed_btn = null;
+      if (document.documentElement && document.documentElement.hasAttribute('data-ag-suppress-native-tt')) {
+        document.documentElement.removeAttribute('data-ag-suppress-native-tt');
+      }
+    }
+
+    function keepSuppressNativeTooltip(anchorBtn) {
+      if (!anchorBtn || !document.documentElement) return;
+      if (window.__ag_tt_guard_interval) {
+        try {
+          clearInterval(window.__ag_tt_guard_interval);
+        } catch (e) {}
+        window.__ag_tt_guard_interval = null;
+      }
+      window.__ag_tt_suppressed_btn = anchorBtn;
+      document.documentElement.setAttribute('data-ag-suppress-native-tt', '1');
+      window.__ag_tt_guard_interval = setInterval(() => {
+        const btn = window.__ag_tt_suppressed_btn;
+        const stillActive =
+          !!(
+            btn &&
+            btn.isConnected &&
+            typeof btn.matches === 'function' &&
+            btn.matches(':hover, :focus-visible')
+          );
+        if (!stillActive) {
+          hideThemeBtnTooltip(false);
+        }
+      }, 350);
+    }
+
+    function hideThemeBtnTooltip(keepSuppressIfHovered = false) {
       if (window.__ag_theme_btn_tt_timer) {
         try {
           clearTimeout(window.__ag_theme_btn_tt_timer);
@@ -1637,13 +2216,60 @@
       if (tt) {
         tt.removeAttribute('data-visible');
       }
+      if (keepSuppressIfHovered === true) {
+        const btn = window.__ag_tt_suppressed_btn;
+        const stillActive =
+          !!(
+            btn &&
+            btn.isConnected &&
+            typeof btn.matches === 'function' &&
+            (btn.matches(':hover, :focus-visible') || document.activeElement === btn)
+          );
+        if (stillActive) return;
+      }
+      releaseNativeTooltipSuppress();
     }
 
-    function scheduleThemeBtnTooltip(anchorBtn, text) {
-      hideThemeBtnTooltip();
+    // 废弃早期无参全局监听回调，交由带事件参数的 v2 监听统一分派，避免热重载后点击按钮提前解除原生气泡压制
+    window.__ag_tt_global_dismiss_fn = null;
+    window.__ag_tt_global_dismiss_v2_fn = (ev) => {
+      if (ev && ev.type === 'pointerdown') {
+        const target = ev.target;
+        const slotBtn =
+          target && typeof target.closest === 'function'
+            ? target.closest('button[data-ag-native-theme-slot]')
+            : null;
+        if (slotBtn) {
+          keepSuppressNativeTooltip(slotBtn);
+          hideThemeBtnTooltip(true);
+          return;
+        }
+      }
+      hideThemeBtnTooltip(false);
+    };
+    if (!window.__ag_tt_global_listener_v2_installed && typeof window.addEventListener === 'function') {
+      window.__ag_tt_global_listener_v2_installed = true;
+      const onDismissV2 = (ev) => {
+        if (typeof window.__ag_tt_global_dismiss_v2_fn === 'function') {
+          window.__ag_tt_global_dismiss_v2_fn(ev);
+        }
+      };
+      window.addEventListener('pointerdown', onDismissV2, true);
+      window.addEventListener('keydown', onDismissV2, true);
+      window.addEventListener('blur', onDismissV2);
+    }
+
+    function scheduleThemeBtnTooltip(anchorBtn, text, suppressNative = false) {
+      hideThemeBtnTooltip(false);
+      if (suppressNative && document.documentElement) {
+        keepSuppressNativeTooltip(anchorBtn);
+      }
       window.__ag_theme_btn_tt_timer = setTimeout(() => {
         window.__ag_theme_btn_tt_timer = null;
-        if (!anchorBtn || !anchorBtn.isConnected || !document.body) return;
+        if (!anchorBtn || !anchorBtn.isConnected || !document.body) {
+          hideThemeBtnTooltip(false);
+          return;
+        }
         let tt = document.getElementById('ag-theme-btn-tooltip');
         if (!tt) {
           tt = document.createElement('div');
@@ -1660,6 +2286,72 @@
       }, 260);
     }
 
+    function schedulePresetPersist(kind, val) {
+      if (!window.__ag_pending_persist_map) {
+        window.__ag_pending_persist_map = {};
+      }
+      window.__ag_pending_persist_map[kind] = val;
+      if (window.__ag_persist_preset_timer) {
+        clearTimeout(window.__ag_persist_preset_timer);
+      }
+      window.__ag_persist_preset_timer = setTimeout(() => {
+        window.__ag_persist_preset_timer = null;
+        const map = window.__ag_pending_persist_map || {};
+        window.__ag_pending_persist_map = {};
+        if (map.light !== undefined && typeof window.__agSetLightPreset === 'function') {
+          try {
+            window.__agSetLightPreset(map.light);
+          } catch (e) {}
+        }
+        if (map.dark !== undefined && typeof window.__agSetDarkPreset === 'function') {
+          try {
+            window.__agSetDarkPreset(map.dark);
+          } catch (e) {}
+        }
+        if (map.uiLang !== undefined && typeof window.__agSetUiLang === 'function') {
+          try {
+            window.__agSetUiLang(map.uiLang);
+          } catch (e) {}
+        }
+      }, 120);
+    }
+
+    function refreshSelfOwnedUiLang() {
+      if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
+        window.__ag_sync_warm_night_btn_fn();
+      }
+      if (typeof window.__ag_rerender_token_analytics_lang === 'function') {
+        try {
+          window.__ag_rerender_token_analytics_lang();
+        } catch (e) {}
+      }
+      if (typeof window.__ag_check_route_fn === 'function') {
+        try {
+          window.__ag_check_route_fn();
+        } catch (e) {}
+      }
+    }
+    window.__ag_refresh_self_ui_lang = refreshSelfOwnedUiLang;
+
+    function setRuntimeUiLang(nextUiLang, persist = true) {
+      const normalized = !HAS_LOCALE_PACK || String(nextUiLang || '').trim().toLowerCase() === 'en' ? 'en' : 'target';
+      const prev = isUiEnglish() ? 'en' : 'target';
+      window.__ag_runtime_ui_lang = normalized;
+      window.__ag_host_ui_lang = normalized;
+      if (document.documentElement) {
+        document.documentElement.setAttribute('data-ag-lang', isUiEnglish() ? 'en' : INSTALLED_LOCALE);
+      }
+      hideThemeBtnTooltip(false);
+      if (prev !== normalized && typeof window.__ag_apply_i18n_dom_state === 'function') {
+        window.__ag_apply_i18n_dom_state();
+      }
+      refreshSelfOwnedUiLang();
+      if (persist) {
+        schedulePresetPersist('uiLang', normalized);
+      }
+    }
+    window.__ag_set_ui_lang_fn = setRuntimeUiLang;
+
     function setRuntimeDarkPreset(nextPreset, persist = true) {
       const normalized = resolveNormalizedDarkPreset(nextPreset);
       window.__ag_runtime_dark_preset = normalized;
@@ -1670,19 +2362,47 @@
       if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
         window.__ag_sync_warm_night_btn_fn();
       }
-      if (persist && typeof window.__agSetDarkPreset === 'function') {
-        try {
-          window.__agSetDarkPreset(normalized);
-        } catch (e) {}
+      if (persist) {
+        schedulePresetPersist('dark', normalized);
       }
     }
+
+    function setRuntimeLightPreset(nextPreset, persist = true) {
+      const normalized = resolveNormalizedLightPreset(nextPreset);
+      window.__ag_runtime_light_preset = normalized;
+      try {
+        Storage.prototype.setItem.call(localStorage, 'theme-color-flavor', normalized);
+      } catch (e) {}
+      syncChuanbanPreset();
+      if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
+        window.__ag_sync_warm_night_btn_fn();
+      }
+      if (persist) {
+        schedulePresetPersist('light', normalized);
+      }
+    }
+
+    // Antigravity 官方流线 A 形标志、仿 Claude 近似放射性星芒与 MO 徽标路径
+    const AGY_BRAND_GLYPH_PATH =
+      'M12 3.55C9.45 3.55 7.95 7.85 6.85 12.35C5.95 16.05 4.85 17.65 3.55 18.95C3.05 19.45 3.45 20.3 4.2 20.2C5.45 20.05 6.65 18.45 7.95 15.95C9.2 13.55 10.4 12.4 12 12.4C13.6 12.4 14.8 13.55 16.05 15.95C17.35 18.45 18.55 20.05 19.8 20.2C20.55 20.3 20.95 19.45 20.45 18.95C19.15 17.65 18.05 16.05 17.15 12.35C16.05 7.85 14.55 3.55 12 3.55Z';
+    const CLAUDE_SPARK_RAYS_PATH =
+      'M12 9.7L12 2.6M13.12 10.08L16.1 5.35M13.92 10.92L20.15 7.6M14.2 12.06L19.85 12.26M13.88 13.18L19.9 17.1M13.02 13.94L15.48 18.52M11.94 14.2L11.8 21.25M10.82 13.88L7.76 18.5M10.06 13.06L3.9 16.32M9.8 11.94L4.25 11.74M10.12 10.82L4.1 7.0M10.94 10.06L8.38 5.45';
+    const MO_BADGE_PATH_M =
+      'M1.35 12.45V3.55h1.9l2.75 5.35 2.75-5.35h1.9v8.9H9.0V6.5L6.52 11.3H5.48L3.0 6.5v5.95H1.35Z';
+    const MO_BADGE_PATH_O =
+      'M16.55 3.4c2.48 0 4.18 1.9 4.18 4.6s-1.7 4.6-4.18 4.6-4.18-1.9-4.18-4.6 1.7-4.6 4.18-4.6Zm0 1.6c-1.42 0-2.42 1.2-2.42 3.0s1.0 3.0 2.42 3.0 2.42-1.2 2.42-3.0-1.0-3.0-2.42-3.0Z';
 
     function identifyNativeThemeButtons(group) {
       if (!group || group.nodeType !== 1) return null;
       const nativeBtns = [];
       for (let i = 0; i < group.children.length; i++) {
         const ch = group.children[i];
-        if (ch && ch.tagName === 'BUTTON' && !ch.hasAttribute('data-ag-warm-night-btn')) {
+        if (
+          ch &&
+          ch.tagName === 'BUTTON' &&
+          !ch.hasAttribute('data-ag-warm-night-btn') &&
+          !ch.hasAttribute('data-ag-morandi-btn')
+        ) {
           nativeBtns.push(ch);
         }
       }
@@ -1693,9 +2413,35 @@
         const pathEl = btn.querySelector('svg path');
         const d = pathEl ? String(pathEl.getAttribute('d') || '') : '';
         const aria = String(btn.getAttribute('aria-label') || '').trim().toLowerCase();
-        if (d.startsWith('M263.85-140') || aria === 'system' || aria === '跟随系统') return 'system';
-        if (d.startsWith('M565-395') || aria === 'light' || aria === '浅色' || aria === '浅色主题') return 'light';
-        if (d.startsWith('M481.15-140') || aria === 'dark' || aria === '深色' || aria === '深色主题') return 'dark';
+        if (
+          d.startsWith('M263.85-140') ||
+          aria === 'system' ||
+          aria === '跟随系统' ||
+          aria === '原版配色' ||
+          aria === 'original theme' ||
+          aria === '純正テーマ'
+        ) {
+          return 'system';
+        }
+        if (
+          d.startsWith('M565-395') ||
+          aria === 'light' ||
+          aria === '浅色' ||
+          aria === '浅色主题' ||
+          aria === 'absolutely！' ||
+          aria === 'absolutely!'
+        ) {
+          return 'light';
+        }
+        if (
+          d.startsWith('M481.15-140') ||
+          aria === 'dark' ||
+          aria === '深色' ||
+          aria === '深色主题' ||
+          aria === 'ダーク'
+        ) {
+          return 'dark';
+        }
         return null;
       };
       const k0 = classifyBtn(nativeBtns[0]);
@@ -1708,75 +2454,361 @@
     }
 
     function syncAppearanceWarmNightToggle() {
+      const currentPreset = document.documentElement.getAttribute('data-ag-preset') || PRESETS.MORANDI;
+      const isNativePreset = currentPreset === PRESETS.NATIVE;
       const isWarmNight = document.documentElement.getAttribute('data-ag-dark-preset') === DARK_PRESETS.CLAUDE_WARM;
+      const isDarkNow =
+        document.documentElement.getAttribute('data-ag-theme-mode') === 'dark' ||
+        !!(document.body && document.body.classList.contains('dark'));
+
+      // 单一真值源：5 选 1 互斥穷举，从根源上消除双高亮或全灭
+      let activeSlot = PRESETS.MORANDI;
+      if (isNativePreset) {
+        activeSlot = PRESETS.NATIVE;
+      } else if (isDarkNow) {
+        activeSlot = isWarmNight ? DARK_PRESETS.CLAUDE_WARM : DARK_PRESETS.ONYX;
+      } else {
+        activeSlot = currentPreset === PRESETS.ABSOLUTELY ? PRESETS.ABSOLUTELY : PRESETS.MORANDI;
+      }
+
       const groups = document.querySelectorAll('[data-slot="toggle-group"][data-ag-theme-toggle-group="1"]');
       for (let i = 0; i < groups.length; i++) {
         const group = groups[i];
+        if (group.getAttribute('data-ag-active-slot') !== activeSlot) {
+          group.setAttribute('data-ag-active-slot', activeSlot);
+        }
+        const sysBtn = group.querySelector('button[data-ag-native-theme-slot="system"]');
+        const morandiBtn = group.querySelector('button[data-ag-morandi-btn="1"]');
         const bookBtn = group.querySelector('button[data-ag-warm-night-btn="1"]');
-        const darkBtn = group.querySelector('button[data-ag-native-theme-slot="dark"]');
-        if (!bookBtn || !darkBtn) continue;
-        const isExplicitDarkSelected =
-          darkBtn.hasAttribute('data-pressed') || darkBtn.getAttribute('aria-pressed') === 'true';
-        const bookActive = isExplicitDarkSelected && isWarmNight;
-        if (bookActive) {
-          if (!bookBtn.hasAttribute('data-pressed')) bookBtn.setAttribute('data-pressed', '');
-          if (bookBtn.getAttribute('aria-pressed') !== 'true') bookBtn.setAttribute('aria-pressed', 'true');
-          if (group.getAttribute('data-ag-active-night') !== DARK_PRESETS.CLAUDE_WARM) {
-            group.setAttribute('data-ag-active-night', DARK_PRESETS.CLAUDE_WARM);
+
+        if (morandiBtn) {
+          const moOn = activeSlot === PRESETS.MORANDI;
+          if (moOn) {
+            if (!morandiBtn.hasAttribute('data-pressed')) morandiBtn.setAttribute('data-pressed', '');
+            if (morandiBtn.getAttribute('aria-pressed') !== 'true') morandiBtn.setAttribute('aria-pressed', 'true');
+          } else {
+            if (morandiBtn.hasAttribute('data-pressed')) morandiBtn.removeAttribute('data-pressed');
+            if (morandiBtn.getAttribute('aria-pressed') !== 'false') morandiBtn.setAttribute('aria-pressed', 'false');
           }
-        } else {
-          if (bookBtn.hasAttribute('data-pressed')) bookBtn.removeAttribute('data-pressed');
-          if (bookBtn.getAttribute('aria-pressed') !== 'false') bookBtn.setAttribute('aria-pressed', 'false');
-          if (group.hasAttribute('data-ag-active-night')) {
-            group.removeAttribute('data-ag-active-night');
+        }
+
+        if (bookBtn) {
+          const bookOn = activeSlot === DARK_PRESETS.CLAUDE_WARM;
+          if (bookOn) {
+            if (!bookBtn.hasAttribute('data-pressed')) bookBtn.setAttribute('data-pressed', '');
+            if (bookBtn.getAttribute('aria-pressed') !== 'true') bookBtn.setAttribute('aria-pressed', 'true');
+          } else {
+            if (bookBtn.hasAttribute('data-pressed')) bookBtn.removeAttribute('data-pressed');
+            if (bookBtn.getAttribute('aria-pressed') !== 'false') bookBtn.setAttribute('aria-pressed', 'false');
+          }
+        }
+
+        if (sysBtn) {
+          const wantSysAria = getSelfUiStrings().themeTooltips.native;
+          if (sysBtn.getAttribute('aria-label') !== wantSysAria) {
+            sysBtn.setAttribute('aria-label', wantSysAria);
+          }
+          const agyGlyph = sysBtn.querySelector('path[data-ag-agy-glyph="1"]');
+          const gradId = sysBtn.getAttribute('data-ag-grad-id');
+          if (agyGlyph) {
+            const wantFill = activeSlot === PRESETS.NATIVE && gradId ? `url(#${gradId})` : 'currentColor';
+            if (agyGlyph.getAttribute('fill') !== wantFill) {
+              agyGlyph.setAttribute('fill', wantFill);
+            }
+          }
+        }
+        const lightBtn = group.querySelector('button[data-ag-native-theme-slot="light"]');
+        if (lightBtn) {
+          const wantLightAria = getSelfUiStrings().themeTooltips.absolutely;
+          if (lightBtn.getAttribute('aria-label') !== wantLightAria) {
+            lightBtn.setAttribute('aria-label', wantLightAria);
+          }
+        }
+        if (morandiBtn) {
+          const wantMoAria = getSelfUiStrings().themeTooltips.morandi;
+          if (morandiBtn.getAttribute('aria-label') !== wantMoAria) {
+            morandiBtn.setAttribute('aria-label', wantMoAria);
+          }
+        }
+        if (bookBtn) {
+          const wantBookAria = getSelfUiStrings().themeTooltips.warmDark;
+          if (bookBtn.getAttribute('aria-label') !== wantBookAria) {
+            bookBtn.setAttribute('aria-label', wantBookAria);
+          }
+        }
+        const darkBtn = group.querySelector('button[data-ag-native-theme-slot="dark"]');
+        if (darkBtn) {
+          const wantDarkAria = getSelfUiStrings().themeTooltips.onyx;
+          if (darkBtn.getAttribute('aria-label') !== wantDarkAria) {
+            darkBtn.setAttribute('aria-label', wantDarkAria);
+          }
+        }
+      }
+
+      const activeLangSlot = isUiEnglish() ? 'en' : 'target';
+      const wantRowLabel = getSelfUiStrings().rowLabel;
+      const langRows = document.querySelectorAll('[data-ag-lang-row="1"]');
+      for (let i = 0; i < langRows.length; i++) {
+        const row = langRows[i];
+        const lbl = row.querySelector('[data-ag-lang-row-label="1"]');
+        if (lbl && lbl.textContent !== wantRowLabel) {
+          lbl.textContent = wantRowLabel;
+        }
+        const lGroup = row.querySelector('[data-ag-lang-toggle-group="1"]');
+        if (lGroup) {
+          if (lGroup.getAttribute('data-ag-active-lang') !== activeLangSlot) {
+            lGroup.setAttribute('data-ag-active-lang', activeLangSlot);
+          }
+          const enBtn = lGroup.querySelector('button[data-ag-lang-btn="en"]');
+          const tgtBtn = lGroup.querySelector('button[data-ag-lang-btn="target"]');
+          if (enBtn) {
+            const enOn = activeLangSlot === 'en';
+            const wantEnAria = getSelfUiStrings().enTooltip;
+            if (enBtn.getAttribute('aria-label') !== wantEnAria) enBtn.setAttribute('aria-label', wantEnAria);
+            if (enBtn.getAttribute('aria-pressed') !== String(enOn)) enBtn.setAttribute('aria-pressed', String(enOn));
+          }
+          if (tgtBtn) {
+            const tgtOn = activeLangSlot === 'target';
+            if (tgtBtn.getAttribute('aria-pressed') !== String(tgtOn)) tgtBtn.setAttribute('aria-pressed', String(tgtOn));
           }
         }
       }
     }
 
+    window.__ag_handle_native_theme_btn_hover = (btn, slot, entering) => {
+      if (!entering) {
+        hideThemeBtnTooltip(false);
+        return;
+      }
+      if (slot === 'system') {
+        scheduleThemeBtnTooltip(btn, getSelfUiStrings().themeTooltips.native, true);
+      } else if (slot === 'light') {
+        scheduleThemeBtnTooltip(btn, getSelfUiStrings().themeTooltips.absolutely, true);
+      } else if (slot === 'dark') {
+        scheduleThemeBtnTooltip(btn, getSelfUiStrings().themeTooltips.onyx, true);
+      }
+    };
+
+    window.__ag_handle_native_theme_btn_click = (ev, btn, slot) => {
+      if (typeof ev === 'string') {
+        slot = ev;
+        ev = null;
+        btn = null;
+      }
+      if (slot === 'light' && window.__ag_internal_sun_click) return;
+      if (slot === 'dark' && window.__ag_internal_moon_click) return;
+      if (btn) {
+        keepSuppressNativeTooltip(btn);
+        hideThemeBtnTooltip(true);
+      } else {
+        hideThemeBtnTooltip(false);
+      }
+
+      // 若目标原生按钮已处于按下态（如 MO->Absolutely! 或 📖->🌙），拦截多余 click 防 Base UI 反选取消
+      const alreadyPressed =
+        !!(btn && (btn.hasAttribute('data-pressed') || btn.getAttribute('aria-pressed') === 'true'));
+      if (alreadyPressed && ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+
+      if (slot === 'system') {
+        setRuntimeLightPreset(PRESETS.NATIVE, true);
+      } else if (slot === 'light') {
+        setRuntimeLightPreset(PRESETS.ABSOLUTELY, true);
+      } else if (slot === 'dark') {
+        if (document.documentElement.getAttribute('data-ag-preset') === PRESETS.NATIVE) {
+          setRuntimeLightPreset(window.__ag_last_non_native_light || PRESETS.MORANDI, true);
+        }
+        setRuntimeDarkPreset(DARK_PRESETS.ONYX, true);
+      }
+      requestAnimationFrame(() => {
+        if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
+          window.__ag_sync_warm_night_btn_fn();
+        }
+      });
+    };
+
+    window.__ag_handle_custom_theme_btn_click = (ev, group, kind) => {
+      if (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      hideThemeBtnTooltip();
+      if (!group) return;
+      if (kind === PRESETS.MORANDI) {
+        setRuntimeLightPreset(PRESETS.MORANDI, true);
+        const liveLightBtn = group.querySelector('button[data-ag-native-theme-slot="light"]');
+        const sunPressed =
+          !!(liveLightBtn && (liveLightBtn.hasAttribute('data-pressed') || liveLightBtn.getAttribute('aria-pressed') === 'true'));
+        if (liveLightBtn && !sunPressed) {
+          window.__ag_internal_sun_click = true;
+          try {
+            liveLightBtn.click();
+          } finally {
+            window.__ag_internal_sun_click = false;
+          }
+        }
+      } else if (kind === DARK_PRESETS.CLAUDE_WARM) {
+        if (document.documentElement.getAttribute('data-ag-preset') === PRESETS.NATIVE) {
+          setRuntimeLightPreset(window.__ag_last_non_native_light || PRESETS.MORANDI, true);
+        }
+        setRuntimeDarkPreset(DARK_PRESETS.CLAUDE_WARM, true);
+        const liveDarkBtn = group.querySelector('button[data-ag-native-theme-slot="dark"]');
+        const moonPressed =
+          !!(liveDarkBtn && (liveDarkBtn.hasAttribute('data-pressed') || liveDarkBtn.getAttribute('aria-pressed') === 'true'));
+        if (liveDarkBtn && !moonPressed) {
+          window.__ag_internal_moon_click = true;
+          try {
+            liveDarkBtn.click();
+          } finally {
+            window.__ag_internal_moon_click = false;
+          }
+        }
+      }
+      requestAnimationFrame(() => {
+        if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
+          window.__ag_sync_warm_night_btn_fn();
+        }
+      });
+    };
+
     function mountWarmNightBtnOnGroup(group) {
       const slots = identifyNativeThemeButtons(group);
-      if (!slots) return false;
+      if (!slots) {
+        group.setAttribute('data-ag-theme-toggle-group', '0');
+        return false;
+      }
       const { sysBtn, lightBtn, darkBtn } = slots;
       group.setAttribute('data-ag-theme-toggle-group', '1');
       sysBtn.setAttribute('data-ag-native-theme-slot', 'system');
       lightBtn.setAttribute('data-ag-native-theme-slot', 'light');
       darkBtn.setAttribute('data-ag-native-theme-slot', 'dark');
 
-      if (!darkBtn.__ag_warm_night_hooked) {
-        darkBtn.__ag_warm_night_hooked = true;
-        darkBtn.addEventListener(
-          'click',
-          () => {
-            if (window.__ag_internal_moon_click) return;
-            if (typeof window.__ag_set_dark_preset_fn === 'function') {
-              window.__ag_set_dark_preset_fn(DARK_PRESETS.ONYX, true);
-            }
-            requestAnimationFrame(() => {
-              if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
-                window.__ag_sync_warm_night_btn_fn();
-              }
+      const svgNS = 'http://www.w3.org/2000/svg';
+
+      // 第 1 格：无损保留 React 原生 svg（由 CSS 隐藏），追加 Antigravity 官方流线 A 形标志
+      if (!sysBtn.querySelector('svg[data-ag-agy-logo="1"]')) {
+        const origSysSvg = sysBtn.querySelector('svg');
+        if (origSysSvg && origSysSvg.parentNode) {
+          if (sysBtn.__ag_orig_sys_aria === undefined) {
+            sysBtn.__ag_orig_sys_aria = sysBtn.getAttribute('aria-label') || '';
+          }
+          const gradId = 'ag-agy-grad-' + Math.random().toString(36).slice(2, 9);
+          sysBtn.setAttribute('data-ag-grad-id', gradId);
+          const agySvg = document.createElementNS(svgNS, 'svg');
+          agySvg.setAttribute('xmlns', svgNS);
+          agySvg.setAttribute('data-ag-agy-logo', '1');
+          agySvg.setAttribute('width', '16');
+          agySvg.setAttribute('height', '16');
+          agySvg.setAttribute('viewBox', '0 0 24 24');
+          agySvg.setAttribute('fill', 'none');
+          agySvg.setAttribute('aria-hidden', 'true');
+          const defs = document.createElementNS(svgNS, 'defs');
+          const grad = document.createElementNS(svgNS, 'linearGradient');
+          grad.setAttribute('id', gradId);
+          grad.setAttribute('x1', '4');
+          grad.setAttribute('y1', '20');
+          grad.setAttribute('x2', '18');
+          grad.setAttribute('y2', '4');
+          grad.setAttribute('gradientUnits', 'userSpaceOnUse');
+          const stops = [
+            ['0%', '#3B82F6'],
+            ['46%', '#34A853'],
+            ['78%', '#FBBC05'],
+            ['100%', '#EA4335']
+          ];
+          for (let s = 0; s < stops.length; s++) {
+            const st = document.createElementNS(svgNS, 'stop');
+            st.setAttribute('offset', stops[s][0]);
+            st.setAttribute('stop-color', stops[s][1]);
+            grad.appendChild(st);
+          }
+          defs.appendChild(grad);
+          const glyphPath = document.createElementNS(svgNS, 'path');
+          glyphPath.setAttribute('data-ag-agy-glyph', '1');
+          glyphPath.setAttribute('d', AGY_BRAND_GLYPH_PATH);
+          glyphPath.setAttribute('fill', 'currentColor');
+          agySvg.appendChild(defs);
+          agySvg.appendChild(glyphPath);
+          origSysSvg.parentNode.appendChild(agySvg);
+        }
+      }
+      sysBtn.setAttribute('aria-label', getSelfUiStrings().themeTooltips.native);
+      if (sysBtn.hasAttribute('title')) sysBtn.removeAttribute('title');
+
+      // 第 2 格：无损保留 React 原生 svg（由 CSS 隐藏），追加「Absolutely！」仿 Claude 放射性星芒标志
+      if (!lightBtn.querySelector('svg[data-ag-claude-spark="1"]')) {
+        const origSvg = lightBtn.querySelector('svg');
+        if (origSvg && origSvg.parentNode) {
+          if (lightBtn.__ag_orig_light_aria === undefined) {
+            lightBtn.__ag_orig_light_aria = lightBtn.getAttribute('aria-label') || '';
+          }
+          const sparkSvg = document.createElementNS(svgNS, 'svg');
+          sparkSvg.setAttribute('xmlns', svgNS);
+          sparkSvg.setAttribute('data-ag-claude-spark', '1');
+          sparkSvg.setAttribute('width', '16');
+          sparkSvg.setAttribute('height', '16');
+          sparkSvg.setAttribute('viewBox', '0 0 24 24');
+          sparkSvg.setAttribute('fill', 'none');
+          sparkSvg.setAttribute('aria-hidden', 'true');
+          const coreCircle = document.createElementNS(svgNS, 'circle');
+          coreCircle.setAttribute('cx', '12');
+          coreCircle.setAttribute('cy', '12');
+          coreCircle.setAttribute('r', '2.3');
+          coreCircle.setAttribute('fill', 'currentColor');
+          const raysPath = document.createElementNS(svgNS, 'path');
+          raysPath.setAttribute('d', CLAUDE_SPARK_RAYS_PATH);
+          raysPath.setAttribute('stroke', 'currentColor');
+          raysPath.setAttribute('stroke-width', '1.95');
+          raysPath.setAttribute('stroke-linecap', 'round');
+          sparkSvg.appendChild(coreCircle);
+          sparkSvg.appendChild(raysPath);
+          origSvg.parentNode.appendChild(sparkSvg);
+        }
+      }
+      lightBtn.setAttribute('aria-label', getSelfUiStrings().themeTooltips.absolutely);
+      if (lightBtn.hasAttribute('title')) lightBtn.removeAttribute('title');
+
+      // 第 5 格：统一深色槽位多语无障碍标签与自定义提示气泡（兼容 EN / 目标语实时切换与卸载还原）
+      if (darkBtn.__ag_orig_dark_aria === undefined) {
+        darkBtn.__ag_orig_dark_aria = darkBtn.getAttribute('aria-label') || '';
+      }
+      darkBtn.setAttribute('aria-label', getSelfUiStrings().themeTooltips.onyx);
+      if (darkBtn.hasAttribute('title')) darkBtn.removeAttribute('title');
+
+      // 统一动态委托事件，杜绝热更新后旧闭包残留与重复绑定
+      const bindNativeSlotOnce = (btn, slot) => {
+        if (!btn.__ag_delegated_hover_v4 && (slot === 'system' || slot === 'light' || slot === 'dark')) {
+          btn.__ag_delegated_hover_v4 = true;
+          if (!btn.__ag_delegated_slot_v3 || slot === 'dark') {
+            btn.addEventListener('mouseenter', () => {
+              window.__ag_handle_native_theme_btn_hover?.(btn, slot, true);
             });
+            btn.addEventListener('mouseleave', () => {
+              window.__ag_handle_native_theme_btn_hover?.(btn, slot, false);
+            });
+            btn.addEventListener('focus', () => {
+              window.__ag_handle_native_theme_btn_hover?.(btn, slot, true);
+            });
+            btn.addEventListener('blur', () => {
+              window.__ag_handle_native_theme_btn_hover?.(btn, slot, false);
+            });
+          }
+        }
+        if (btn.__ag_delegated_slot_v3) return;
+        btn.__ag_delegated_slot_v3 = true;
+        btn.addEventListener(
+          'click',
+          (ev) => {
+            window.__ag_handle_native_theme_btn_click?.(ev, btn, slot);
           },
           true
         );
-      }
-      for (const otherBtn of [sysBtn, lightBtn]) {
-        if (!otherBtn.__ag_warm_night_hooked) {
-          otherBtn.__ag_warm_night_hooked = true;
-          otherBtn.addEventListener(
-            'click',
-            () => {
-              requestAnimationFrame(() => {
-                if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
-                  window.__ag_sync_warm_night_btn_fn();
-                }
-              });
-            },
-            true
-          );
-        }
-      }
+      };
+      bindNativeSlotOnce(sysBtn, 'system');
+      bindNativeSlotOnce(lightBtn, 'light');
+      bindNativeSlotOnce(darkBtn, 'dark');
 
       if (window.__ag_appearance_btn_attr_observer) {
         try {
@@ -1795,18 +2827,62 @@
         } catch (e) {}
       }
 
+      // 第 3 格：在原本书卷的位置新添「MO」按钮（默认激活：莫兰迪色）
+      let morandiBtn = group.querySelector('button[data-ag-morandi-btn="1"]');
+      if (!morandiBtn) {
+        morandiBtn = document.createElement('button');
+        morandiBtn.type = 'button';
+        morandiBtn.setAttribute('data-ag-morandi-btn', '1');
+        morandiBtn.setAttribute('aria-label', getSelfUiStrings().themeTooltips.morandi);
+        morandiBtn.setAttribute('aria-pressed', 'false');
+        morandiBtn.className = lightBtn.className;
+
+        const moSpan = document.createElement('span');
+        moSpan.className = 'shrink-0 flex items-center';
+        const moSvg = document.createElementNS(svgNS, 'svg');
+        moSvg.setAttribute('xmlns', svgNS);
+        moSvg.setAttribute('width', '18');
+        moSvg.setAttribute('height', '16');
+        moSvg.setAttribute('viewBox', '0 0 22 16');
+        moSvg.setAttribute('fill', 'currentColor');
+        moSvg.setAttribute('aria-hidden', 'true');
+        const pathM = document.createElementNS(svgNS, 'path');
+        pathM.setAttribute('d', MO_BADGE_PATH_M);
+        const pathO = document.createElementNS(svgNS, 'path');
+        pathO.setAttribute('d', MO_BADGE_PATH_O);
+        pathO.setAttribute('fill-rule', 'evenodd');
+        moSvg.appendChild(pathM);
+        moSvg.appendChild(pathO);
+        moSpan.appendChild(moSvg);
+        morandiBtn.appendChild(moSpan);
+
+        morandiBtn.addEventListener('mouseenter', () => {
+          scheduleThemeBtnTooltip(morandiBtn, getSelfUiStrings().themeTooltips.morandi, false);
+        });
+        morandiBtn.addEventListener('mouseleave', hideThemeBtnTooltip);
+        morandiBtn.addEventListener('focus', () => {
+          scheduleThemeBtnTooltip(morandiBtn, getSelfUiStrings().themeTooltips.morandi, false);
+        });
+        morandiBtn.addEventListener('blur', hideThemeBtnTooltip);
+        morandiBtn.addEventListener('click', (ev) => {
+          window.__ag_handle_custom_theme_btn_click?.(ev, group, PRESETS.MORANDI);
+        });
+
+        group.appendChild(morandiBtn);
+      }
+
+      // 第 4 格：书卷「暖纸深色」按钮
       let bookBtn = group.querySelector('button[data-ag-warm-night-btn="1"]');
       if (!bookBtn) {
         bookBtn = document.createElement('button');
         bookBtn.type = 'button';
         bookBtn.setAttribute('data-ag-warm-night-btn', '1');
-        bookBtn.setAttribute('aria-label', '暖纸深色');
+        bookBtn.setAttribute('aria-label', getSelfUiStrings().themeTooltips.warmDark);
         bookBtn.setAttribute('aria-pressed', 'false');
         bookBtn.className = lightBtn.className;
 
         const spanWrap = document.createElement('span');
         spanWrap.className = 'shrink-0 flex items-center';
-        const svgNS = 'http://www.w3.org/2000/svg';
         const svgEl = document.createElementNS(svgNS, 'svg');
         svgEl.setAttribute('xmlns', svgNS);
         svgEl.setAttribute('width', '16');
@@ -1821,51 +2897,101 @@
         bookBtn.appendChild(spanWrap);
 
         bookBtn.addEventListener('mouseenter', () => {
-          scheduleThemeBtnTooltip(bookBtn, '暖纸深色');
+          scheduleThemeBtnTooltip(bookBtn, getSelfUiStrings().themeTooltips.warmDark, false);
         });
         bookBtn.addEventListener('mouseleave', hideThemeBtnTooltip);
         bookBtn.addEventListener('focus', () => {
-          scheduleThemeBtnTooltip(bookBtn, '暖纸深色');
+          scheduleThemeBtnTooltip(bookBtn, getSelfUiStrings().themeTooltips.warmDark, false);
         });
         bookBtn.addEventListener('blur', hideThemeBtnTooltip);
         bookBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          hideThemeBtnTooltip();
-          if (typeof window.__ag_set_dark_preset_fn === 'function') {
-            window.__ag_set_dark_preset_fn(DARK_PRESETS.CLAUDE_WARM, true);
-          }
-          const moonPressed = darkBtn.hasAttribute('data-pressed') || darkBtn.getAttribute('aria-pressed') === 'true';
-          if (!moonPressed) {
-            window.__ag_internal_moon_click = true;
-            try {
-              darkBtn.click();
-            } finally {
-              window.__ag_internal_moon_click = false;
-            }
-          }
-          requestAnimationFrame(() => {
-            if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
-              window.__ag_sync_warm_night_btn_fn();
-            }
-          });
+          window.__ag_handle_custom_theme_btn_click?.(ev, group, DARK_PRESETS.CLAUDE_WARM);
         });
 
-        // 物理挂载在末尾（不干扰 React 前 3 个按钮的 nextSibling 链），由 CSS order: 3 排入太阳与月亮正中间
+        // 物理挂载在末尾（不干扰 React 前 3 个按钮的 nextSibling 链），由 CSS order 排位
         group.appendChild(bookBtn);
+      }
+
+      // 外观卡片独立「界面语言 / Language」二元切换行（严格限定挂载在 .agy-card 内，零侵入 React 子节点顺序；预留 installedLocale 映射）
+      if (HAS_LOCALE_PACK) {
+        const themeRow = group.closest ? group.closest('.agy-card > div') : null;
+        const card = themeRow ? themeRow.parentElement : null;
+        if (card && !card.querySelector('[data-ag-lang-row="1"]')) {
+          const localeInfo = LOCALE_META[INSTALLED_LOCALE] || LOCALE_META['zh-CN'];
+          const langRow = document.createElement('div');
+          langRow.setAttribute('data-ag-lang-row', '1');
+          langRow.className =
+            themeRow.className || 'py-2 px-3 w-full bg-transparent flex justify-between gap-4 items-center';
+
+          const leftCol = document.createElement('div');
+          leftCol.className = 'flex-1 flex flex-col gap-0.5';
+          const labelInner = document.createElement('div');
+          labelInner.className = 'flex items-center gap-1.5';
+          const labelSpan = document.createElement('span');
+          labelSpan.setAttribute('data-ag-lang-row-label', '1');
+          labelSpan.textContent = getSelfUiStrings().rowLabel;
+          labelInner.appendChild(labelSpan);
+          leftCol.appendChild(labelInner);
+
+          const rightCol = document.createElement('div');
+          rightCol.className = 'shrink-0';
+          const langGroup = document.createElement('div');
+          langGroup.setAttribute('data-orientation', 'horizontal');
+          langGroup.setAttribute('aria-orientation', 'horizontal');
+          langGroup.setAttribute('role', 'group');
+          langGroup.setAttribute('data-slot', 'toggle-group');
+          langGroup.setAttribute('data-ag-theme-toggle-group', '0');
+          langGroup.setAttribute('data-ag-lang-toggle-group', '1');
+          langGroup.setAttribute('data-ag-active-lang', isUiEnglish() ? 'en' : 'target');
+          langGroup.className = group.className;
+
+          const mkLangBtn = (slotVal, labelText, getTipFn) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.setAttribute('data-ag-lang-btn', slotVal);
+            b.setAttribute('aria-label', getTipFn());
+            b.setAttribute('aria-pressed', String((isUiEnglish() ? 'en' : 'target') === slotVal));
+            b.className = lightBtn.className;
+            b.textContent = labelText;
+            b.addEventListener('mouseenter', () => {
+              scheduleThemeBtnTooltip(b, getTipFn(), false);
+            });
+            b.addEventListener('mouseleave', hideThemeBtnTooltip);
+            b.addEventListener('focus', () => {
+              scheduleThemeBtnTooltip(b, getTipFn(), false);
+            });
+            b.addEventListener('blur', hideThemeBtnTooltip);
+            b.addEventListener('click', (ev) => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              window.__ag_set_ui_lang_fn?.(slotVal, true);
+            });
+            return b;
+          };
+
+          langGroup.appendChild(mkLangBtn('en', 'EN', () => getSelfUiStrings().enTooltip));
+          langGroup.appendChild(mkLangBtn('target', localeInfo.btnLabel, () => localeInfo.tooltip));
+          rightCol.appendChild(langGroup);
+          langRow.appendChild(leftCol);
+          langRow.appendChild(rightCol);
+          card.appendChild(langRow);
+        }
       }
       return true;
     }
 
-    function ensureAppearanceWarmNightToggle(root) {
+    function ensureAppearanceWarmNightToggle(root, forceRemount = false) {
       if (!document.body) return;
       const scope = root && root.nodeType === 1 ? root : document;
+      const selector = forceRemount
+        ? '[data-slot="toggle-group"]:not([data-ag-theme-toggle-group="0"])'
+        : '[data-slot="toggle-group"]:not([data-ag-theme-toggle-group])';
       let mountedAny = false;
-      if (scope.matches && scope.matches('[data-slot="toggle-group"]')) {
+      if (scope.matches && scope.matches(selector)) {
         if (mountWarmNightBtnOnGroup(scope)) mountedAny = true;
       }
       if (scope.querySelectorAll) {
-        const groups = scope.querySelectorAll('[data-slot="toggle-group"]');
+        const groups = scope.querySelectorAll(selector);
         for (let i = 0; i < groups.length; i++) {
           if (mountWarmNightBtnOnGroup(groups[i])) mountedAny = true;
         }
@@ -1876,6 +3002,7 @@
     }
 
     window.__ag_set_dark_preset_fn = setRuntimeDarkPreset;
+    window.__ag_set_light_preset_fn = setRuntimeLightPreset;
     window.__ag_sync_warm_night_btn_fn = syncAppearanceWarmNightToggle;
     window.__ag_ensure_warm_night_btn_fn = ensureAppearanceWarmNightToggle;
 
@@ -1883,6 +3010,18 @@
       try {
         window.__ag_appearance_btn_attr_observer.disconnect();
       } catch (e) {}
+    }
+    if (window.__ag_appearance_scan_raf) {
+      try {
+        cancelAnimationFrame(window.__ag_appearance_scan_raf);
+      } catch (e) {}
+      window.__ag_appearance_scan_raf = null;
+    }
+    if (window.__ag_appearance_scan_timer) {
+      try {
+        clearTimeout(window.__ag_appearance_scan_timer);
+      } catch (e) {}
+      window.__ag_appearance_scan_timer = null;
     }
     if (typeof MutationObserver !== 'undefined') {
       window.__ag_appearance_btn_attr_observer = new MutationObserver(() => {
@@ -1893,20 +3032,35 @@
           window.__ag_appearance_toggle_observer.disconnect();
         } catch (e) {}
       }
+      const APPEARANCE_SKIP_SELECTOR =
+        '[data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .prose, .markdown, pre, code, .monaco-editor, .xterm, #ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill], [data-testid="conversation-list-sidebar"], [data-testid="conversation-row-sidebar"], [data-testid="conversation-row-history"]';
+      const scheduleAppearanceGroupScan = () => {
+        if (document.hidden || typeof requestAnimationFrame !== 'function') {
+          if (!window.__ag_appearance_scan_timer) {
+            window.__ag_appearance_scan_timer = setTimeout(() => {
+              window.__ag_appearance_scan_timer = null;
+              ensureAppearanceWarmNightToggle(document);
+            }, 0);
+          }
+        } else if (!window.__ag_appearance_scan_raf) {
+          window.__ag_appearance_scan_raf = requestAnimationFrame(() => {
+            window.__ag_appearance_scan_raf = null;
+            ensureAppearanceWarmNightToggle(document);
+          });
+        }
+      };
       window.__ag_appearance_toggle_observer = new MutationObserver((mutations) => {
         for (let i = 0; i < mutations.length; i++) {
           const m = mutations[i];
           if (m.type !== 'childList' || m.addedNodes.length === 0) continue;
+          const targetEl = m.target && m.target.nodeType === 1 ? m.target : null;
+          if (targetEl && targetEl.closest && targetEl.closest(APPEARANCE_SKIP_SELECTOR)) continue;
           for (let j = 0; j < m.addedNodes.length; j++) {
             const n = m.addedNodes[j];
-            if (n && n.nodeType === 1) {
-              if (
-                (n.matches && n.matches('[data-slot="toggle-group"]')) ||
-                (n.firstElementChild && n.querySelector && n.querySelector('[data-slot="toggle-group"]'))
-              ) {
-                ensureAppearanceWarmNightToggle(n);
-              }
-            }
+            if (!n || n.nodeType !== 1) continue;
+            if (n.matches && n.matches(APPEARANCE_SKIP_SELECTOR)) continue;
+            scheduleAppearanceGroupScan();
+            return;
           }
         }
       });
@@ -1915,7 +3069,7 @@
       }
     }
 
-    ensureAppearanceWarmNightToggle(document);
+    ensureAppearanceWarmNightToggle(document, true);
     syncAppearanceWarmNightToggle();
   }
 
@@ -1952,6 +3106,9 @@
   const activeMetricsObservers = new Set();
   const activeMetricsRafs = new Set();
   const metricsRouteTimers = new Set();
+  const pendingPillLayoutBoxes = new Set();
+  let pillLayoutRafId = 0;
+  let routeCheckRafId = 0;
 
   function scheduleTrackedHandle(trackSet, schedulerFn, callback) {
     let settled = false;
@@ -1965,11 +3122,35 @@
     return settled ? 0 : handle;
   }
 
+  function scheduleDeferredPillLayout(box) {
+    if (!box || IS_SWARM_PLUGIN_FRAME || !MODULES.metrics) return;
+    pendingPillLayoutBoxes.add(box);
+    if (pillLayoutRafId) return;
+    pillLayoutRafId = scheduleTrackedHandle(activeMetricsRafs, requestAnimationFrame, () => {
+      pillLayoutRafId = 0;
+      if (pendingPillLayoutBoxes.size === 0) return;
+      const queued = Array.from(pendingPillLayoutBoxes);
+      pendingPillLayoutBoxes.clear();
+      for (let i = 0; i < queued.length; i++) {
+        const b = queued[i];
+        if (b && b.isConnected) {
+          ensureMetricsPillForBox(b, true, false);
+        }
+      }
+    });
+  }
+
   if (!window.__ag_metrics_by_id || window.__ag_metrics_cache_ver !== PATCH_VERSION) {
     window.__ag_metrics_by_id = Object.create(null);
     window.__ag_metrics_cache_ver = PATCH_VERSION;
   }
   const metricsById = window.__ag_metrics_by_id;
+  const pendingRunUntilByCid = Object.create(null);
+  let lastMetricsReqAt = 0;
+  let metricsDomCheckRafId = 0;
+  let metricsDomObserverStarted = false;
+  const PENDING_RING_SVG =
+    '<svg class="ag-ctx-ring ag-ctx-ok" width="13" height="13" viewBox="0 0 16 16" aria-hidden="true"><circle class="ag-ctx-ring-track" cx="8" cy="8" r="5.8" fill="none" stroke-width="2.1"/><circle class="ag-ctx-ring-fill" cx="8" cy="8" r="5.8" fill="none" stroke-width="2.1" stroke-linecap="round" stroke-dasharray="36.44" stroke-dashoffset="32.80" transform="rotate(-90 8 8)"/></svg>';
 
   window.__ag_cleanup_fns.push(() => {
     for (const ro of activeMetricsObservers) {
@@ -1984,6 +3165,11 @@
       } catch (e) {}
     }
     activeMetricsRafs.clear();
+    pillLayoutRafId = 0;
+    routeCheckRafId = 0;
+    metricsDomCheckRafId = 0;
+    metricsDomObserverStarted = false;
+    pendingPillLayoutBoxes.clear();
     for (const tid of metricsRouteTimers) {
       try {
         clearTimeout(tid);
@@ -2113,9 +3299,14 @@
         }
         return '';
       }
-      const view =
-        box.closest && box.closest('[data-testid="conversation-view"][data-cascade-id], [data-cascade-id]');
-      if (view) {
+      const convView =
+        box.closest && box.closest('[data-testid="conversation-view"][data-cascade-id]');
+      if (convView) {
+        const cid = String(convView.getAttribute('data-cascade-id') || '').trim().toLowerCase();
+        if (CASCADE_UUID_RE.test(cid)) return cid;
+      }
+      const view = box.closest && box.closest('[data-cascade-id]');
+      if (view && view !== convView) {
         const cid = String(view.getAttribute('data-cascade-id') || '').trim().toLowerCase();
         if (CASCADE_UUID_RE.test(cid)) return cid;
       }
@@ -2553,12 +3744,49 @@
     return primary;
   }
 
+  function isBoxActivelyRunning(box) {
+    return !!(box && box.querySelector && box.querySelector('[data-testid="input-cancel-button"]'));
+  }
+
+  function shouldShowPendingForBox(box, cid) {
+    if (!cid || !CASCADE_UUID_RE.test(cid)) return false;
+    if (isBoxActivelyRunning(box)) {
+      pendingRunUntilByCid[cid] = Date.now() + 2500;
+      return true;
+    }
+    return (pendingRunUntilByCid[cid] || 0) > Date.now();
+  }
+
+  function applyPendingStateToPill(box, pill) {
+    if (!pill) return;
+    const textEl = getPillTextEl(pill);
+    const ttMap = isWeakMapInstance(window.__ag_pill_tooltip_map) ? window.__ag_pill_tooltip_map : pillTooltipMap;
+    pill.removeAttribute('data-ag-rendered-cid');
+    pill.setAttribute('data-ag-pending', '1');
+    ttMap.delete(pill);
+    hideMetricsTooltipIfOwner(pill);
+    const pendingLabel = isUiEnglish() ? 'Measuring\u2026' : '采样中\u2026';
+    const nextHtml = `${PENDING_RING_SVG}<span class="ag-ring-after">${pendingLabel}</span>`;
+    const textChanged = !!(textEl && textEl.innerHTML !== nextHtml);
+    if (textEl && textChanged) {
+      textEl.innerHTML = nextHtml;
+    }
+    const wasHidden = pill.style.display !== 'inline-flex';
+    if (wasHidden) {
+      pill.style.display = 'inline-flex';
+    }
+    if (wasHidden || textChanged) {
+      scheduleDeferredPillLayout(box);
+    }
+  }
+
   function applyPayloadToPill(box, pill, payload) {
     if (!pill) return;
     const textEl = getPillTextEl(pill);
     const ttMap = isWeakMapInstance(window.__ag_pill_tooltip_map) ? window.__ag_pill_tooltip_map : pillTooltipMap;
     if (!payload || !payload.hasData) {
       pill.removeAttribute('data-ag-rendered-cid');
+      pill.removeAttribute('data-ag-pending');
       if (textEl && textEl.innerHTML !== '') {
         textEl.innerHTML = '';
       }
@@ -2567,8 +3795,10 @@
       hideMetricsTooltipIfOwner(pill);
       return;
     }
+    pill.removeAttribute('data-ag-pending');
     const renderedCid = String(payload.cascadeId || pill.getAttribute('data-ag-cascade-id') || '').trim().toLowerCase();
     if (renderedCid) {
+      delete pendingRunUntilByCid[renderedCid];
       if (pill.getAttribute('data-ag-rendered-cid') !== renderedCid) {
         pill.setAttribute('data-ag-rendered-cid', renderedCid);
       }
@@ -2602,7 +3832,7 @@
       pill.style.display = 'inline-flex';
     }
     if (wasHidden || textChanged) {
-      ensureMetricsPillForBox(box, true, false);
+      scheduleDeferredPillLayout(box);
     }
   }
 
@@ -2621,15 +3851,18 @@
     const renderedCid = String(pill.getAttribute('data-ag-rendered-cid') || '').trim().toLowerCase();
     const cached = metricsById[cid];
     if (cached && cached.hasData) {
-      if (renderedCid !== cid || pill.style.display !== 'inline-flex') {
+      if (renderedCid !== cid || pill.hasAttribute('data-ag-pending') || pill.style.display !== 'inline-flex') {
         applyPayloadToPill(box, pill, cached);
       }
-    } else if (renderedCid !== '' || pill.style.display === 'inline-flex') {
+    } else if (shouldShowPendingForBox(box, cid)) {
+      applyPendingStateToPill(box, pill);
+    } else if (renderedCid !== '' || pill.hasAttribute('data-ag-pending') || pill.style.display === 'inline-flex') {
       applyPayloadToPill(box, pill, null);
     }
   }
 
   function ensureMetricsPill(forceLayout = false, resetHysteresis = false) {
+    if (IS_SWARM_PLUGIN_FRAME) return null;
     if (!MODULES.metrics) {
       document.querySelectorAll('#ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill]').forEach((el) => {
         el.style.display = 'none';
@@ -2640,6 +3873,7 @@
         } catch (e) {}
       }
       activeMetricsObservers.clear();
+      metricsDomObserverStarted = false;
       hideMetricsTooltipIfOwner(null);
       return null;
     }
@@ -2660,7 +3894,7 @@
 
   window.__ag_render_metrics = function (payload) {
     try {
-      if (!MODULES.metrics || !payload || typeof payload !== 'object') return;
+      if (IS_SWARM_PLUGIN_FRAME || !MODULES.metrics || !payload || typeof payload !== 'object') return;
       const cid = String(payload.cascadeId || '').trim().toLowerCase();
       if (!CASCADE_UUID_RE.test(cid)) return;
       metricsById[cid] = payload;
@@ -2668,25 +3902,53 @@
       if (!primaryCid || cid === primaryCid) {
         window.__ag_last_metrics = payload;
       }
-      ensureMetricsPill(false);
       const boxes = getAllInputBoxes();
       const totalBoxes = boxes.length;
-      for (let i = 0; i < boxes.length; i++) {
+      if (totalBoxes === 0) return;
+      let mountedNewPill = false;
+      for (let i = 0; i < totalBoxes; i++) {
         const box = boxes[i];
-        const pill = findPillInBox(box);
-        if (!pill) continue;
-        const boxCid =
-          String(pill.getAttribute('data-ag-cascade-id') || '').trim().toLowerCase() ||
-          resolveBoxCascadeId(box, totalBoxes);
-        if (boxCid === cid) {
-          if (pill.getAttribute('data-ag-cascade-id') !== cid) {
-            pill.setAttribute('data-ag-cascade-id', cid);
-          }
-          applyPayloadToPill(box, pill, payload);
+        let pill = findPillInBox(box);
+        if (!pill) {
+          pill = ensureMetricsPillForBox(box, false, false);
+          if (!pill) continue;
+          mountedNewPill = true;
         }
+        const boxCid =
+          resolveBoxCascadeId(box, totalBoxes) ||
+          String(pill.getAttribute('data-ag-cascade-id') || '').trim().toLowerCase();
+        if (boxCid && pill.getAttribute('data-ag-cascade-id') !== boxCid) {
+          pill.setAttribute('data-ag-cascade-id', boxCid);
+        }
+        if (boxCid === cid) {
+          if (payload.hasData) {
+            applyPayloadToPill(box, pill, payload);
+          } else if (shouldShowPendingForBox(box, cid)) {
+            applyPendingStateToPill(box, pill);
+          } else {
+            applyPayloadToPill(box, pill, null);
+          }
+        }
+      }
+      if (mountedNewPill) {
+        const kept = pruneOrphanedPills(boxes);
+        assignPrimaryPillIds(kept, primaryCid);
       }
     } catch (e) {}
   };
+
+  function sendMetricsSubscription(watchedIds, watchedSig, forceRetry = false) {
+    if (typeof window.__agRequestMetrics !== 'function') return false;
+    if (!forceRetry && watchedSig === window.__ag_watched_cascade_sig) return true;
+    try {
+      window.__agRequestMetrics(JSON.stringify(watchedIds));
+      window.__ag_watched_cascade_sig = watchedSig;
+      lastMetricsReqAt = Date.now();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
 
   function checkRouteAndMountMetrics() {
     try {
@@ -2749,22 +4011,43 @@
       window.__ag_watched_cascade_id = primaryWatched;
       window.__ag_last_metrics = primaryWatched ? metricsById[primaryWatched] || null : null;
 
-      if (watchedSig !== window.__ag_watched_cascade_sig) {
-        window.__ag_watched_cascade_sig = watchedSig;
-        if (typeof window.__agRequestMetrics === 'function') {
-          try {
-            window.__agRequestMetrics(JSON.stringify(watchedIds));
-          } catch (e) {}
+      let hasUnackedCid = false;
+      for (let i = 0; i < watchedIds.length; i++) {
+        if (!(watchedIds[i] in metricsById)) {
+          hasUnackedCid = true;
+          break;
         }
+      }
+      if (watchedSig !== window.__ag_watched_cascade_sig) {
+        sendMetricsSubscription(watchedIds, watchedSig, false);
+      } else if (hasUnackedCid && Date.now() - lastMetricsReqAt >= 1200) {
+        sendMetricsSubscription(watchedIds, watchedSig, true);
       }
     } catch (e) {}
   }
 
   function scheduleRouteCheck() {
+    if (IS_SWARM_PLUGIN_FRAME) return;
+    if (routeCheckRafId) {
+      try {
+        cancelAnimationFrame(routeCheckRafId);
+      } catch (e) {}
+      activeMetricsRafs.delete(routeCheckRafId);
+      routeCheckRafId = 0;
+    }
+    if (metricsRouteTimers.size > 0) {
+      for (const tid of metricsRouteTimers) {
+        try {
+          clearTimeout(tid);
+        } catch (e) {}
+      }
+      metricsRouteTimers.clear();
+    }
     const runCheck = () => {
       if (typeof window.__ag_check_route_fn === 'function') window.__ag_check_route_fn();
     };
-    scheduleTrackedHandle(activeMetricsRafs, requestAnimationFrame, () => {
+    routeCheckRafId = scheduleTrackedHandle(activeMetricsRafs, requestAnimationFrame, () => {
+      routeCheckRafId = 0;
       scheduleTrackedHandle(metricsRouteTimers, (cb) => setTimeout(cb, 0), runCheck);
     });
     for (const delay of [120, 400]) {
@@ -2855,6 +4138,103 @@
     });
   }
 
+  const METRICS_DOM_SKIP_SEL =
+    '[data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .prose, .markdown, pre, code, .monaco-editor, .monaco-diff-editor, .xterm, #ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill], #ag-live-metrics-tooltip, [data-testid="conversation-list-sidebar"]';
+
+  function isMetricsRelevantNode(node, rawInputId, watchDescendantSel) {
+    if (!node || node.nodeType !== 1) return 0;
+    if (rawInputId && node.id === rawInputId) return 1;
+    const tid = node.getAttribute && node.getAttribute('data-testid');
+    if (tid === 'input-cancel-button') return 2;
+    if (
+      tid === 'send-button' ||
+      tid === 'conversation-view' ||
+      tid === 'side-question-tab-conversation' ||
+      tid === 'subagent-tab-conversation'
+    ) {
+      return 1;
+    }
+    if (node.classList && node.classList.contains('agy-composer-footer')) return 1;
+    if (node.firstElementChild && node.querySelector) {
+      if (node.querySelector('[data-testid="input-cancel-button"]')) return 2;
+      if (watchDescendantSel && node.querySelector(watchDescendantSel)) return 1;
+    }
+    return 0;
+  }
+
+  function scheduleMetricsDomSync(forceBackendRefresh = false) {
+    if (IS_SWARM_PLUGIN_FRAME || !MODULES.metrics) return;
+    if (!metricsDomCheckRafId) {
+      metricsDomCheckRafId = scheduleTrackedHandle(activeMetricsRafs, requestAnimationFrame, () => {
+        metricsDomCheckRafId = 0;
+        checkRouteAndMountMetrics();
+      });
+    }
+    if (forceBackendRefresh) {
+      for (const delay of [100, 450]) {
+        scheduleTrackedHandle(
+          metricsRouteTimers,
+          (cb) => setTimeout(cb, delay),
+          () => {
+            checkRouteAndMountMetrics();
+            const curIds = Array.isArray(window.__ag_watched_cascade_ids) ? window.__ag_watched_cascade_ids : [];
+            if (curIds.length > 0) {
+              sendMetricsSubscription(curIds, curIds.join(','), true);
+            }
+          }
+        );
+      }
+    }
+  }
+
+  function ensureMetricsDomObserver() {
+    if (IS_SWARM_PLUGIN_FRAME || !MODULES.metrics || metricsDomObserverStarted) return;
+    if (!document.body || typeof MutationObserver !== 'function') return;
+    const rawId = String(SELECTORS.inputBoxId || '').trim();
+    const escId = rawId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const watchDescendantSel = escId
+      ? `[id="${escId}"], .agy-composer-footer, [data-testid="conversation-view"], [data-testid="side-question-tab-conversation"], [data-testid="subagent-tab-conversation"]`
+      : '.agy-composer-footer, [data-testid="conversation-view"], [data-testid="side-question-tab-conversation"], [data-testid="subagent-tab-conversation"]';
+    try {
+      const domObs = new MutationObserver((mutations) => {
+        let shouldSync = false;
+        let cancelRemoved = false;
+        for (let i = 0; i < mutations.length; i++) {
+          const m = mutations[i];
+          const t = m.target;
+          if (t && t.nodeType === 1 && t.closest && t.closest(METRICS_DOM_SKIP_SEL)) continue;
+          const added = m.addedNodes;
+          for (let j = 0; j < added.length; j++) {
+            const hit = isMetricsRelevantNode(added[j], rawId, watchDescendantSel);
+            if (hit > 0) {
+              shouldSync = true;
+              break;
+            }
+          }
+          const removed = m.removedNodes;
+          for (let k = 0; k < removed.length; k++) {
+            const hit = isMetricsRelevantNode(removed[k], rawId, watchDescendantSel);
+            if (hit === 2) {
+              shouldSync = true;
+              cancelRemoved = true;
+              break;
+            }
+            if (hit === 1) {
+              shouldSync = true;
+            }
+          }
+          if (cancelRemoved) break;
+        }
+        if (shouldSync) {
+          scheduleMetricsDomSync(cancelRemoved);
+        }
+      });
+      domObs.observe(document.body, { childList: true, subtree: true });
+      activeMetricsObservers.add(domObs);
+      metricsDomObserverStarted = true;
+    } catch (e) {}
+  }
+
   window.__ag_check_route_fn = checkRouteAndMountMetrics;
 
   if (window.__ag_metrics_route_watcher) {
@@ -2867,6 +4247,7 @@
     window.__ag_metrics_route_watcher = setInterval(checkRouteAndMountMetrics, 3000);
   }
   if (document.body || IS_SWARM_PLUGIN_FRAME) {
+    ensureMetricsDomObserver();
     checkRouteAndMountMetrics();
   }
 
@@ -2908,11 +4289,21 @@
         Stuck: '受阻停滞',
         Moving: '推进中',
         Waiting: '等待中',
+        Resting: '休眠待命',
+        'Standing by': '待命中',
+        Blocked: '受阻',
+        'Not started': '未开始',
+        'In progress': '进行中',
+        Reconnecting: '正在重连',
+        'Nothing blocked': '无受阻项',
+        'Needs you': '需您处理',
+        'Planned next': '后续计划',
         Other: '其他',
         Tasks: '任务',
         Task: '任务',
         Active: '活跃中',
         Team: '团队',
+        'The team': '团队成员',
         Retired: '已退役',
         Error: '错误',
         Killed: '已终止',
@@ -2929,8 +4320,7 @@
       }
     : null;
 
-  function dictLookup(s) {
-    if (!s) return undefined;
+  function dictLookupCore(s) {
     const exact = DICT[s];
     if (typeof exact === 'string') return exact;
     if (SWARM_FRAME_ONLY_DICT) {
@@ -2949,6 +4339,19 @@
     return DICT_CI.get(sNorm.toLowerCase());
   }
 
+  function dictLookup(s) {
+    if (!s) return undefined;
+    const hit = dictLookupCore(s);
+    if (typeof hit === 'string') return hit;
+    if (s.endsWith('\u2026')) {
+      return dictLookupCore(s.slice(0, -1) + '...');
+    }
+    if (s.endsWith('...')) {
+      return dictLookupCore(s.slice(0, -3) + '\u2026');
+    }
+    return undefined;
+  }
+
   let scanBodyFn = null;
   const I18N_OBS_OPTS = {
     childList: true,
@@ -2958,7 +4361,7 @@
     attributeFilter: ['title', 'aria-label', 'placeholder']
   };
 
-  if (MODULES.i18n) {
+  if (HAS_LOCALE_PACK) {
     function splitTopLevelSelectors(selStr) {
       const parts = [];
       let cur = '';
@@ -3000,11 +4403,12 @@
     }
 
     const CONTAINER_IMMUTABLE_EXCLUDE_SELECTOR =
-      'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, #ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill], #ag-live-metrics-tooltip, .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title';
+      'code, pre, kbd, samp, style, script, noscript, [data-markdown-root], [data-testid="user-message-content"], .agy-user-bubble, .monaco-editor, .monaco-diff-editor, .xterm, [data-uri^="file:"], [data-uri^="vscode-"], a.inline-pill[href^="file:"], a.inline-pill[href^="vscode-"], #ag-live-metrics-pill, .ag-live-metrics-pill, [data-ag-metrics-pill], #ag-live-metrics-tooltip, #ag-token-nav-section, #ag-token-analytics-panel, #ag-ta-tooltip, [data-ag-token-ui], .msg-body, #raw, [data-testid="swarm-raw"], #swarm-title';
     const TEXT_IMMUTABLE_EXCLUDE_SELECTOR =
       'textarea, input, [contenteditable="true"], [data-testid="conversation-navigator-turn"], ' +
       CONTAINER_IMMUTABLE_EXCLUDE_SELECTOR;
 
+    const immutableTextExclPartsSet = new Set(splitTopLevelSelectors(TEXT_IMMUTABLE_EXCLUDE_SELECTOR));
     const mergedExcludeParts = splitTopLevelSelectors(DEFAULT_EXCLUDE_I18N);
     const userExcludeParts = splitTopLevelSelectors(SELECTORS.excludeI18n);
     for (let i = 0; i < userExcludeParts.length; i++) {
@@ -3013,6 +4417,9 @@
       }
     }
     const EXCLUDE_SELECTOR = mergedExcludeParts.join(', ');
+    const DYNAMIC_TEXT_EXCLUDE_SELECTOR = mergedExcludeParts
+      .filter((tok) => !immutableTextExclPartsSet.has(tok))
+      .join(', ');
     const FORM_ATTR_EXCLUDE_SELECTOR = mergedExcludeParts
       .filter((tok) => {
         const low = tok.toLowerCase().replace(/\s+/g, '');
@@ -3156,6 +4563,13 @@
     const RE_SEE_ALL = /^See all\s*\((\d+)\)$/i;
     const RE_SHOW_BREAKDOWNS = /^Show\s+(\d+)\s+breakdowns?$/i;
     const RE_SHOW_MORE_SUBAGENTS = /^Show\s+(\d+)\s+more\s+subagents?$/i;
+    const RE_SWARM_WORKER_ROLE = /^Swarm\s+Worker\s*\(([^()\r\n]{1,100})\)(?:\s*\(([^()\r\n]{1,40})\))?$/i;
+    const RE_OPEN_SUBAGENT = /^Open\s+Subagent:\s*(.+)$/i;
+    const RE_INVOKED_SUBAGENT = /^Invoked\s+subagent:\s*(.+)$/i;
+    const RE_BROWSER_TASK = /^Browser\s+task:\s*(.+)$/i;
+    const RE_SUBAGENTS_COUNT = /^(\d+)\s+subagents?$/i;
+    const RE_PAREN_SUBAGENTS = /^\((\d+)\s+subagents?\)$/i;
+    const RE_ARIA_PANE_HEADER = /^(.+?)\s+header$/i;
     const RE_SHOW_EARLIER_STEPS = /^Show\s+(\d+)\s+earlier\s+steps?$/i;
     const RE_SORT_FILTER_ACTIVE = /^Sort and filter conversations\s*\((\d+)\s+active\)$/i;
     const RE_STILL_THINKING_SEC = /^Still thinking,\s*(\d+)\s*seconds?$/i;
@@ -3254,9 +4668,9 @@
       /^([A-Za-z0-9 .+-]+?)\s+that may offload routine steps to\s+([A-Za-z0-9 .+-]+?)\.\s*Same\s+([A-Za-z0-9 .+-]+?)-level quality,\s*fewer tokens used\.?$/i;
     const RE_MODEL_REMOVED_ON = /^(.+?)\s+will be removed from Antigravity on\s+(.+?)\.?$/i;
     const RE_MODEL_PERIOD_LIMIT =
-      /^(Gemini\b[\w .+-]*|Claude\b[\w .+-]*|GPT\b[\w .+-]*|Orchestrator\b[\w .+()-]*)\s+(Weekly|Daily|Monthly)\s+Limit$/i;
+      /^(Gemini\b[\w .+-]*?|Claude\b[\w .+-]*?|GPT\b[\w .+-]*?|Orchestrator\b[\w .+()-]*?)\s+(Weekly|Daily|Monthly)\s+Limit$/i;
     const RE_MODEL_EFFORT_LABEL =
-      /^(Gemini\b[\w .+-]*|Claude\b[\w .+-]*|GPT\b[\w .+-]*)\s+\((Extra\s+High|Minimal|Low|Medium|High|Extra|XHigh|Max)\)$/i;
+      /^(Gemini\b[\w .+-]*?|Claude\b[\w .+-]*?|GPT\b[\w .+-]*?)\s+(?:\((Extra\s+High|Minimal|Low|Medium|High|Extra|XHigh|Max)\)|(Extra\s+High|Minimal|Low|Medium|High|Extra|XHigh|Max))$/i;
     const RE_YOUR_PLAN = /^Your Plan:\s*([^\r\n]{1,80})$/;
     const RE_AVAILABLE_AI_CREDITS = /^Available AI Credits:\s*([^\r\n]{1,40})$/i;
     const RE_EXITED_CODE_ONLY = /^Exited with code\s+(-?\d+)(\.)?$/i;
@@ -3340,7 +4754,7 @@
         if (el.isConnected) immutableTextExclCache.set(el, true);
         return true;
       }
-      if (el.closest(EXCLUDE_SELECTOR)) {
+      if (DYNAMIC_TEXT_EXCLUDE_SELECTOR && el.closest(DYNAMIC_TEXT_EXCLUDE_SELECTOR)) {
         return true;
       }
       if (batchSafeSet) batchSafeSet.add(el);
@@ -3379,7 +4793,28 @@
       return !!(el && el.closest && el.closest('header, [data-testid="breadcrumb-segment"]'));
     }
 
-    function computeTextTranslation(raw, contextEl) {
+    const SUBAGENT_BUILTIN_LABEL_MAP = {
+      subagent: '子 Agent',
+      'browser subagent': '浏览器子 Agent',
+      'browser task': '浏览器任务',
+      'research subagent': '调研子 Agent',
+      'swarm worker': '蜂群协作者'
+    };
+
+    function translateSubagentLabel(rawLabel) {
+      const s = String(rawLabel || '').trim();
+      if (!s) return s;
+      const mapped = SUBAGENT_BUILTIN_LABEL_MAP[s.toLowerCase()];
+      if (mapped) return mapped;
+      if (RE_SWARM_WORKER_ROLE.test(s)) {
+        return s.replace(RE_SWARM_WORKER_ROLE, (_, name, suffix) =>
+          suffix ? '蜂群协作者 (' + name + ') (' + suffix + ')' : '蜂群协作者 (' + name + ')'
+        );
+      }
+      return s;
+    }
+
+    function computeTextTranslation(raw, contextEl, textNode = null) {
       if (!raw) return null;
       const trimmed = raw.trim();
       if (!trimmed) return null;
@@ -3433,6 +4868,7 @@
         if (RE_PINNED_COUNT.test(trimmed)) return raw.replace(RE_PINNED_COUNT, '$1 个已固定标签页');
         if (RE_MODELS_SELECTED.test(trimmed)) return raw.replace(RE_MODELS_SELECTED, '已选择 $1 个模型');
         if (RE_BROWSER_STEPS.test(trimmed)) return raw.replace(RE_BROWSER_STEPS, '$1 个浏览器步骤');
+        if (RE_SUBAGENTS_COUNT.test(trimmed)) return raw.replace(RE_SUBAGENTS_COUNT, '$1 个子 Agent');
         const mMediaAtt = trimmed.match(RE_MEDIA_ATTACHMENTS);
         if (mMediaAtt) {
           const mediaMap = { image: '图片', audio: '音频', video: '视频' };
@@ -3519,7 +4955,35 @@
           return raw.replace(RE_SWARM_YOU_SUFFIX, '$1（您）');
         }
       }
+      if (c0 === 40) {
+        if (RE_PAREN_SUBAGENTS.test(trimmed)) {
+          return raw.replace(RE_PAREN_SUBAGENTS, '（$1 个子 Agent）');
+        }
+      }
+      if (
+        (raw === ' subagent' || raw === 's') &&
+        contextEl &&
+        contextEl.closest &&
+        contextEl.closest('[data-testid="subagent-node"]')
+      ) {
+        if (raw === ' subagent') return ' 个子 Agent';
+        if (raw === 's') {
+          if (textNode && textNode.previousSibling && textNode.previousSibling.nodeType === 3) {
+            const prevNode = textNode.previousSibling;
+            const prevOrig = (origTextMap.get(prevNode)?.origRaw || prevNode.nodeValue || '').trim();
+            const prevCur = (prevNode.nodeValue || '').trim();
+            if (/^subagent$/i.test(prevOrig) || /个子 Agent$/.test(prevCur)) return '';
+          } else if (/\(\d+\s*(?:subagent|个子 Agent)s?\)/i.test(contextEl.textContent || '')) {
+            return '';
+          }
+        }
+      }
       if (firstUpper === 'S') {
+        if (RE_SWARM_WORKER_ROLE.test(trimmed)) {
+          return raw.replace(RE_SWARM_WORKER_ROLE, (_, name, suffix) =>
+            suffix ? '蜂群协作者 (' + name + ') (' + suffix + ')' : '蜂群协作者 (' + name + ')'
+          );
+        }
         if (RE_SEE_ALL.test(trimmed)) return raw.replace(RE_SEE_ALL, '查看全部 ($1)');
         if (RE_SHOW_BREAKDOWNS.test(trimmed)) return raw.replace(RE_SHOW_BREAKDOWNS, '展开明细 ($1 项)');
         if (RE_SHOW_MORE_SUBAGENTS.test(trimmed)) return raw.replace(RE_SHOW_MORE_SUBAGENTS, '显示另外 $1 个子 Agent');
@@ -3679,7 +5143,43 @@
         if (RE_ORCHESTRATOR_MODEL.test(trimmed)) {
           return raw.replace(RE_ORCHESTRATOR_MODEL, '编排器 ($1)');
         }
+        const mOpenSub = trimmed.match(RE_OPEN_SUBAGENT);
+        if (mOpenSub) {
+          const innerZh = translateSubagentLabel(mOpenSub[1]);
+          return raw.replace(trimmed, () => '打开子 Agent：' + innerZh);
+        }
+        if (
+          contextEl &&
+          contextEl.closest &&
+          contextEl.closest('[data-testid="subagent-permission-source"]') &&
+          /^Open\s+(.+)$/i.test(trimmed)
+        ) {
+          const inner = trimmed.replace(/^Open\s+/i, '').trim();
+          const innerZh = translateSubagentLabel(inner);
+          return raw.replace(trimmed, () => '打开 ' + innerZh);
+        }
+      } else if (firstUpper === 'I') {
+        const mInvSub = trimmed.match(RE_INVOKED_SUBAGENT);
+        if (mInvSub) {
+          const innerZh = translateSubagentLabel(mInvSub[1]);
+          return raw.replace(trimmed, () => '已调用子 Agent：' + innerZh);
+        }
+      } else if (firstUpper === 'B') {
+        const mBrTask = trimmed.match(RE_BROWSER_TASK);
+        if (mBrTask) {
+          return raw.replace(trimmed, () => '浏览器任务：' + mBrTask[1].trim());
+        }
       } else if (firstUpper === 'C') {
+        if (
+          trimmed === 'Comment' &&
+          contextEl &&
+          contextEl.closest &&
+          contextEl.closest(
+            'button, [role="button"], [role="menuitem"], .agy-selection-pill, .selection-popup, .inline-pill:not([data-uri^="file:"]):not([data-uri^="vscode-"])'
+          )
+        ) {
+          return raw.replace(trimmed, () => '评论');
+        }
         if (
           contextEl &&
           contextEl.closest &&
@@ -3687,6 +5187,17 @@
           RE_CONNECTED_TO_HOST.test(trimmed)
         ) {
           return raw.replace(RE_CONNECTED_TO_HOST, '已连接到 $1');
+        }
+      } else if (firstUpper === 'Q') {
+        if (
+          trimmed === 'Quote' &&
+          contextEl &&
+          contextEl.closest &&
+          contextEl.closest(
+            'button, [role="button"], [role="menuitem"], .agy-selection-pill, .selection-popup, .inline-pill:not([data-uri^="file:"]):not([data-uri^="vscode-"])'
+          )
+        ) {
+          return raw.replace(trimmed, () => '引用');
         }
       } else if (firstUpper === 'Y') {
         const mYourPlan = trimmed.match(RE_YOUR_PLAN);
@@ -3813,8 +5324,21 @@
         }
         const mModEff = trimmed.match(RE_MODEL_EFFORT_LABEL);
         if (mModEff) {
-          const effZh = EFFORT_MAP[mModEff[2].replace(/\s+/g, ' ').toLowerCase()] || mModEff[2];
-          return raw.replace(trimmed, () => mModEff[1].trim() + ' (' + effZh + ')');
+          if (mModEff[2]) {
+            const effZh = EFFORT_MAP[mModEff[2].replace(/\s+/g, ' ').toLowerCase()] || mModEff[2];
+            return raw.replace(trimmed, () => mModEff[1].trim() + ' (' + effZh + ')');
+          }
+          if (
+            mModEff[3] &&
+            (!contextEl ||
+              (contextEl.closest &&
+                contextEl.closest(
+                  '[data-testid*="model-selector"], [data-testid*="orchestrator"], [role="menu"], [role="listbox"], [role="option"], [role="menuitem"], [role="menuitemradio"], [role="dialog"], button'
+                )))
+          ) {
+            const effZh = EFFORT_MAP[mModEff[3].replace(/\s+/g, ' ').toLowerCase()] || mModEff[3];
+            return raw.replace(trimmed, () => mModEff[1].trim() + ' · ' + effZh);
+          }
         }
       }
       if (trimmed.length < 240 && trimmed.includes('Exited with code')) {
@@ -3849,7 +5373,7 @@
       }
       const origRaw = rec && rec.lastVal === currentVal ? rec.origRaw : currentVal;
 
-      const nextVal = computeTextTranslation(origRaw, node.parentElement);
+      const nextVal = computeTextTranslation(origRaw, node.parentElement, node);
       if (nextVal !== null) {
         origTextMap.set(node, { origRaw, lastVal: nextVal, ver: PATCH_VERSION });
         if (node.nodeValue !== nextVal) {
@@ -3997,6 +5521,23 @@
       const mOpenPlugin = atrim.match(RE_OPEN_PLUGIN_NAME);
       if (mOpenPlugin) {
         return '打开 ' + mOpenPlugin[1].trim() + ' 插件';
+      }
+      const mOpenSubAttr = atrim.match(RE_OPEN_SUBAGENT);
+      if (mOpenSubAttr) {
+        const innerZh = translateSubagentLabel(mOpenSubAttr[1]);
+        return '打开子 Agent：' + innerZh;
+      }
+      const mPaneHdr = atrim.match(RE_ARIA_PANE_HEADER);
+      if (
+        mPaneHdr &&
+        el &&
+        el.closest &&
+        el.closest('[data-testid*="pane"], [role="region"], header')
+      ) {
+        const baseZh = dictLookup(mPaneHdr[1].trim());
+        if (typeof baseZh === 'string') {
+          return baseZh + (/[A-Za-z0-9]$/.test(baseZh) ? ' 标题栏' : '标题栏');
+        }
       }
       const mEditSq = atrim.match(RE_EDIT_SIDE_Q_TITLE);
       if (mEditSq) {
@@ -4151,23 +5692,26 @@
     }
 
     scanBodyFn = scanAndTranslate;
-    if (document.body) {
-      scanAndTranslate(document.body);
-    }
 
     const dirtyRoots = new Set();
     let pending = false;
     let fallbackTimer = null;
+    let flushRafId = null;
 
     function flushTranslations() {
       pending = false;
+      flushRafId = null;
       if (fallbackTimer) {
         clearTimeout(fallbackTimer);
         fallbackTimer = null;
       }
+      if (isUiEnglish()) {
+        dirtyRoots.clear();
+        return;
+      }
       if (dirtyRoots.size === 0) return;
 
-      if (dirtyRoots.size > 200) {
+      if (dirtyRoots.size > 1500) {
         dirtyRoots.clear();
         try {
           scanAndTranslate(document.body);
@@ -4179,6 +5723,7 @@
       const rootSet = new Set(roots);
       dirtyRoots.clear();
 
+      const topRoots = [];
       for (let i = 0; i < roots.length; i++) {
         const r = roots[i];
         if (!r || !r.isConnected) continue;
@@ -4190,39 +5735,70 @@
           }
         }
         if (!covered) {
-          try {
-            scanAndTranslate(r);
-          } catch (e) {}
+          topRoots.push(r);
         }
+      }
+
+      if (topRoots.length > 120) {
+        try {
+          scanAndTranslate(document.body);
+        } catch (e) {}
+        return;
+      }
+
+      for (let i = 0; i < topRoots.length; i++) {
+        try {
+          scanAndTranslate(topRoots[i]);
+        } catch (e) {}
       }
     }
 
     function scheduleFlush() {
-      if (pending) return;
+      if (pending || isUiEnglish()) return;
       pending = true;
-      requestAnimationFrame(flushTranslations);
+      flushRafId = requestAnimationFrame(flushTranslations);
       fallbackTimer = setTimeout(flushTranslations, 80);
     }
 
     window.__ag_i18n_observer = new MutationObserver((mutations) => {
+      if (isUiEnglish()) return;
       const batchSafeSet = new Set();
       for (let i = 0; i < mutations.length; i++) {
         const m = mutations[i];
         if (m.type === 'characterData') {
           const t = m.target;
-          if (t && t.parentElement && !isExcludedElement(t.parentElement, batchSafeSet)) {
+          if (!t) continue;
+          const rec = origTextMap.get(t);
+          if (rec && rec.lastVal === t.nodeValue && rec.ver === PATCH_VERSION) {
+            continue;
+          }
+          if (t.parentElement && !isExcludedElement(t.parentElement, batchSafeSet)) {
             dirtyRoots.add(t);
           }
         } else if (m.type === 'attributes') {
           const el = m.target;
-          if (el && el.nodeType === 1 && canTranslateElementAttrs(el, batchSafeSet)) {
+          const attr = m.attributeName;
+          if (!el || el.nodeType !== 1 || !attr) continue;
+          if (attr !== 'title' && attr !== 'placeholder' && attr !== 'aria-label') continue;
+          const origDataAttr = 'data-ag-orig-' + attr;
+          if (
+            el['__ag_attr_ver_' + attr] === PATCH_VERSION &&
+            el.getAttribute(origDataAttr + '-last') === el.getAttribute(attr)
+          ) {
+            continue;
+          }
+          if (canTranslateElementAttrs(el, batchSafeSet)) {
             try {
-              translateElementAttrs(el);
+              translateSingleAttr(el, attr, origDataAttr, resolveAttrTranslation);
             } catch (e) {}
           }
         } else if (m.type === 'childList' && m.addedNodes.length > 0) {
           if (m.target && m.target.nodeType === 1 && isExcludedElement(m.target, batchSafeSet)) {
-            if (m.target.closest && m.target.closest('[data-markdown-root]')) {
+            if (
+              m.target.closest &&
+              !m.target.closest('pre, code, .monaco-editor, .monaco-diff-editor, .xterm') &&
+              m.target.closest('[data-markdown-root]')
+            ) {
               for (let j = 0; j < m.addedNodes.length; j++) {
                 const n = m.addedNodes[j];
                 if (
@@ -4249,12 +5825,54 @@
       }
     });
 
-    if (document.body) {
-      window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
+    function applyI18nDomState() {
+      if (!document.body) return;
+      if (isUiEnglish()) {
+        dirtyRoots.clear();
+        pending = false;
+        if (flushRafId) {
+          try {
+            cancelAnimationFrame(flushRafId);
+          } catch (e) {}
+          flushRafId = null;
+        }
+        if (fallbackTimer) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        if (window.__ag_i18n_observer) {
+          try {
+            window.__ag_i18n_observer.disconnect();
+          } catch (e) {}
+        }
+        restoreAllTranslations(document.body);
+      } else {
+        try {
+          scanAndTranslate(document.body);
+        } catch (e) {}
+        if (window.__ag_i18n_observer) {
+          try {
+            window.__ag_i18n_observer.disconnect();
+            window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
+          } catch (e) {}
+        }
+      }
+      if (typeof window.__ag_sync_warm_night_btn_fn === 'function') {
+        window.__ag_sync_warm_night_btn_fn();
+      }
     }
-  } else if (document.body) {
-    // 若用户在配置中关闭了 i18n 模块，实时将已翻译的文本与属性还原为原始英文
-    restoreAllTranslations(document.body);
+    window.__ag_apply_i18n_dom_state = applyI18nDomState;
+
+    if (document.body) {
+      applyI18nDomState();
+    }
+  } else {
+    window.__ag_apply_i18n_dom_state = () => {
+      if (document.body) restoreAllTranslations(document.body);
+    };
+    if (document.body) {
+      restoreAllTranslations(document.body);
+    }
   }
 
   // 若由 Page.addScriptToEvaluateOnNewDocument 在 <head> 早期触发（此时 document.body === null），
@@ -4302,26 +5920,1852 @@
         }
         window.__ag_ensure_warm_night_btn_fn(document);
       }
+      ensureMetricsDomObserver();
       checkRouteAndMountMetrics();
-      if (MODULES.i18n && document.body) {
-        if (typeof scanBodyFn === 'function') {
-          try {
-            scanBodyFn(document.body);
-          } catch (e) {}
-        }
-        if (window.__ag_i18n_observer) {
-          try {
-            window.__ag_i18n_observer.disconnect();
-            window.__ag_i18n_observer.observe(document.body, I18N_OBS_OPTS);
-          } catch (e) {}
-        }
-      } else if (!MODULES.i18n && document.body) {
+      if (typeof window.__ag_sync_token_analytics_fn === 'function' && document.body) {
+        try {
+          window.__ag_sync_token_analytics_fn();
+        } catch (e) {}
+      }
+      if (typeof window.__ag_apply_i18n_dom_state === 'function' && document.body) {
+        window.__ag_apply_i18n_dom_state();
+      } else if (document.body) {
         restoreAllTranslations(document.body);
       }
       window.__ag_body_ready = true;
     };
     window.addEventListener('DOMContentLoaded', window.__ag_dcl_handler, { once: true });
   }
+
+  /* __AG_TOKEN_ANALYTICS_JS_START__ */
+  // ============================================================================
+  // 4.5 系统设置弹窗「Token 统计」Tab（增量 SQLite 多维归因分析）
+  // ============================================================================
+  if (!IS_SWARM_PLUGIN_FRAME && ENABLED && MODULES.tokenAnalytics) {
+    (() => {
+      if (window.location && String(window.location.protocol || '').startsWith('plugin:')) return;
+
+      const NAV_SECTION_ID = 'ag-token-nav-section';
+      const NAV_BTN_ID = 'ag-token-nav-btn';
+      const PANEL_ID = 'ag-token-analytics-panel';
+      const HM_TOOLTIP_ID = 'ag-ta-tooltip';
+      const CACHE_TTL_MS = 60000;
+      const REQUEST_TIMEOUT_MS = 25000;
+
+      /* TOKEN_ANALYTICS_LOGIC_START */
+      const TA_SCENARIO_ORDER = ['tools', 'subagent', 'chat', 'planning', 'memory', 'internal'];
+      const TA_SCENARIO_META = {
+        tools: { label: '工具执行轮次', desc: '触发读/写/终端/检索工具的推理轮次', color: 'var(--ag-ta-c1)' },
+        subagent: { label: '子 Agent', desc: 'research / self / browser 等独立子轨迹', color: 'var(--ag-ta-c2)' },
+        chat: { label: '纯对话与回复', desc: '无工具调用的直接问答与总结输出', color: 'var(--ag-ta-c3)' },
+        planning: { label: '规划与编排', desc: 'Orchestrator / Plan 架构规划轮次', color: 'var(--ag-ta-c4)' },
+        memory: { label: '记忆与上下文压缩', desc: 'MEMORY.md 读写与上下文压缩检查点', color: 'var(--ag-ta-c5)' },
+        internal: { label: 'CLI / 重试与内部', desc: 'CLI 会话与无步关联重试/中止调用', color: 'var(--ag-ta-c6)' }
+      };
+
+      function taCreateDefaultState() {
+        return {
+          metric: 'weighted',
+          rangeDays: 30,
+          dailyMode: 'heatmap',
+          modelGroup: 'model',
+          explorerMode: 'sessions',
+          selectedDate: null,
+          selectedProject: 'ALL',
+          selectedModel: null,
+          selectedScenario: null,
+          search: '',
+          sort: 'metric',
+          onlyLowCache: false,
+          expandedIds: new Set()
+        };
+      }
+
+      function taFormatCompact(tokens) {
+        if (typeof tokens !== 'number' || !Number.isFinite(tokens) || tokens <= 0) return '0';
+        if (tokens >= 1e9) return `${(tokens / 1e9).toFixed(2)}B`;
+        if (tokens >= 1e8) return `${Math.round(tokens / 1e6)}M`;
+        if (tokens >= 1e6) return `${Number((tokens / 1e6).toFixed(1))}M`;
+        if (tokens >= 1e3) return `${Math.round(tokens / 1e3)}k`;
+        return `${Math.round(tokens)}`;
+      }
+
+      function taGetMetricVal(obj, metric = 'weighted') {
+        if (!obj) return 0;
+        if (metric === 'calls') return obj.calls || 0;
+        if (metric === 'total') return obj.total ?? ((obj.inTok || 0) + (obj.cacheRead || 0) + (obj.outTok || 0));
+        if (metric === 'billable') return obj.billable ?? ((obj.inTok || 0) + (obj.outTok || 0));
+        return obj.weighted ?? Math.round((obj.inTok || 0) + 0.1 * (obj.cacheRead || 0) + 6 * (obj.outTok || 0));
+      }
+
+      function taFormatMetricVal(obj, metric = 'weighted') {
+        const val = taGetMetricVal(obj, metric);
+        if (metric === 'calls') return `${val.toLocaleString('en-US')} 次`;
+        return taFormatCompact(val);
+      }
+
+      function taCalcCacheRate(obj) {
+        const inp = (obj?.inTok || 0) + (obj?.cacheRead || 0);
+        return inp > 0 ? obj.cacheRead / inp : null;
+      }
+
+      function taLocalDateStr(tsSec) {
+        const d = new Date(tsSec * 1000);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      }
+
+      function taCalcDateRangeBounds(rangeDays, nowSec) {
+        if (!rangeDays || rangeDays >= 365) return null;
+        const effectiveSec = Math.max(Number(nowSec) || 0, Math.floor(Date.now() / 1000));
+        const end = new Date(effectiveSec * 1000);
+        end.setHours(0, 0, 0, 0);
+        const start = new Date(end.getTime() - (rangeDays - 1) * 86400000);
+        return {
+          minDate: taLocalDateStr(Math.floor(start.getTime() / 1000)),
+          maxDate: taLocalDateStr(Math.floor(end.getTime() / 1000))
+        };
+      }
+
+      function taIsDateInRange(dateStr, rangeDays, nowSec, precomputedBounds = undefined) {
+        if (!rangeDays || rangeDays >= 365) return true;
+        if (!dateStr) return false;
+        const bounds = precomputedBounds !== undefined ? precomputedBounds : taCalcDateRangeBounds(rangeDays, nowSec);
+        if (!bounds) return true;
+        return dateStr >= bounds.minDate && dateStr <= bounds.maxDate;
+      }
+
+      function taFilterAndSortSessions(baseSessions, state) {
+        if (!Array.isArray(baseSessions) || baseSessions.length === 0) return [];
+        const metric = state?.metric || 'weighted';
+        const searchKw = String(state?.search || '').trim().toLowerCase();
+        const onlyLow = Boolean(state?.onlyLowCache);
+        const sortBy = state?.sort || 'metric';
+        const filtered =
+          !onlyLow && !searchKw
+            ? baseSessions.slice()
+            : baseSessions.filter((s) => {
+                if (onlyLow && !s.lowCacheWarning) return false;
+                if (searchKw && !s._searchHay.includes(searchKw)) return false;
+                return true;
+              });
+        return filtered.sort((a, b) => {
+          if (sortBy === 'total') return b.total - a.total;
+          if (sortBy === 'weighted') return b.weighted - a.weighted;
+          if (sortBy === 'inTok') return b.inTok - a.inTok;
+          if (sortBy === 'outTok') return b.outTok - a.outTok;
+          if (sortBy === 'calls') return b.calls - a.calls;
+          if (sortBy === 'lowCache') return (a.cacheRate ?? 1) - (b.cacheRate ?? 1);
+          if (sortBy === 'recent') return (b.lastTs || 0) - (a.lastTs || 0);
+          return taGetMetricVal(b, metric) - taGetMetricVal(a, metric);
+        });
+      }
+
+      function taMakeEmptyTotals() {
+        return {
+          calls: 0,
+          inTok: 0,
+          cacheRead: 0,
+          outTok: 0,
+          thinkTok: 0,
+          respTok: 0,
+          total: 0,
+          weighted: 0,
+          billable: 0
+        };
+      }
+
+      function taAddTotals(acc, f) {
+        acc.calls += f.calls || 0;
+        acc.inTok += f.inTok || 0;
+        acc.cacheRead += f.cacheRead || 0;
+        acc.outTok += f.outTok || 0;
+        acc.thinkTok += f.thinkTok || 0;
+        acc.respTok += f.respTok || 0;
+        acc.total += f.total || 0;
+        acc.weighted += f.weighted || 0;
+        acc.billable += f.billable || 0;
+      }
+
+      function taBuildHeatmapGrid(dailyMap, { weeks = 26, nowSec, metric = 'weighted', rangeDays = 30, selectedDate = null, rangeBounds = undefined } = {}) {
+        const effectiveSec = Math.max(Number(nowSec) || 0, Math.floor(Date.now() / 1000));
+        const bounds = rangeBounds !== undefined ? rangeBounds : taCalcDateRangeBounds(rangeDays, effectiveSec);
+        const end = new Date(effectiveSec * 1000);
+        end.setHours(0, 0, 0, 0);
+        const endDow = (end.getDay() + 6) % 7;
+        const endWeekMonday = new Date(end.getTime() - endDow * 86400000);
+        const startMonday = new Date(endWeekMonday.getTime() - (weeks - 1) * 7 * 86400000);
+
+        const gridDays = [];
+        const weekCols = [];
+        let curCol = [];
+
+        for (let cursor = new Date(startMonday); cursor.getTime() <= end.getTime(); cursor = new Date(cursor.getTime() + 86400000)) {
+          const date = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+          const dow = (cursor.getDay() + 6) % 7;
+          if (dow === 0 && curCol.length > 0) {
+            weekCols.push(curCol);
+            curCol = [];
+          }
+          const rec = dailyMap instanceof Map ? dailyMap.get(date) : dailyMap?.[date];
+          const dayObj = {
+            date,
+            month: cursor.getMonth() + 1,
+            dayOfMonth: cursor.getDate(),
+            dow,
+            calls: rec?.calls || 0,
+            inTok: rec?.inTok || 0,
+            cacheRead: rec?.cacheRead || 0,
+            outTok: rec?.outTok || 0,
+            total: rec?.total || 0,
+            weighted: rec?.weighted || 0,
+            billable: rec?.billable || 0,
+            topProject: rec?.topProject || '',
+            inRange: taIsDateInRange(date, rangeDays, effectiveSec, bounds),
+            selected: selectedDate === date,
+            level: 0
+          };
+          gridDays.push(dayObj);
+          curCol.push(dayObj);
+        }
+        if (curCol.length > 0) {
+          while (curCol.length < 7) curCol.push(null);
+          weekCols.push(curCol);
+        }
+
+        const posVals = gridDays
+          .map((d) => taGetMetricVal(d, metric))
+          .filter((v) => v > 0)
+          .sort((a, b) => a - b);
+        const quantile = (p) => (posVals.length ? posVals[Math.min(posVals.length - 1, Math.floor(posVals.length * p))] : 0);
+        const t1 = quantile(0.25);
+        const t2 = quantile(0.55);
+        const t3 = quantile(0.82);
+
+        for (const d of gridDays) {
+          const val = taGetMetricVal(d, metric);
+          if (val <= 0) d.level = 0;
+          else if (val <= t1) d.level = 1;
+          else if (val <= t2) d.level = 2;
+          else if (val <= t3) d.level = 3;
+          else d.level = 4;
+        }
+
+        let streak = 0;
+        for (let i = gridDays.length - 1; i >= 0; i -= 1) {
+          if (gridDays[i].total > 0) streak += 1;
+          else break;
+        }
+
+        const last14 = gridDays.slice(-14);
+        return { weeks: weekCols, days: gridDays, last14, streak };
+      }
+
+      function taComputeViewModel(payload, state, { heatmapWeeks = 26 } = {}) {
+        const nowSec = Math.max(Number(payload?.nowSec) || 0, Math.floor(Date.now() / 1000));
+        const facts = Array.isArray(payload?.facts) ? payload.facts : [];
+        const conversations = payload?.conversations || {};
+        const metric = state?.metric || 'weighted';
+        const rangeDays = Number(state?.rangeDays || 30);
+        const rangeBounds = taCalcDateRangeBounds(rangeDays, nowSec);
+
+        function matchesFact(f, { ignoreDate = false, ignoreRange = false, ignoreProject = false, ignoreModel = false, ignoreScenario = false } = {}) {
+          if (!ignoreDate && state?.selectedDate) {
+            if (f.date !== state.selectedDate) return false;
+          } else if (!ignoreRange && rangeBounds) {
+            if (f.date < rangeBounds.minDate || f.date > rangeBounds.maxDate) return false;
+          }
+          const c = conversations[f.cid];
+          if (!ignoreProject && state?.selectedProject && state.selectedProject !== 'ALL') {
+            if (c?.projectKey !== state.selectedProject) return false;
+          }
+          if (!ignoreModel && state?.selectedModel) {
+            const key = state?.modelGroup === 'pool' ? f.pool : f.model;
+            if (key !== state.selectedModel) return false;
+          }
+          if (!ignoreScenario && state?.selectedScenario) {
+            if (f.scenario !== state.selectedScenario) return false;
+          }
+          return true;
+        }
+
+        const kpiTotals = taMakeEmptyTotals();
+        const activeDates = new Map();
+        const kpiRootIds = new Set();
+        const kpiSubIds = new Set();
+        const kpiProjKeys = new Set();
+
+        for (const f of facts) {
+          if (!matchesFact(f)) continue;
+          taAddTotals(kpiTotals, f);
+          let dAcc = activeDates.get(f.date);
+          if (!dAcc) {
+            dAcc = { date: f.date, ...taMakeEmptyTotals() };
+            activeDates.set(f.date, dAcc);
+          }
+          taAddTotals(dAcc, f);
+          const c = conversations[f.cid];
+          if (c) {
+            const rId = c.rootId && conversations[c.rootId] ? c.rootId : c.id;
+            kpiRootIds.add(rId);
+            if (c.isSubagent) kpiSubIds.add(c.id);
+            if (c.projectKey) kpiProjKeys.add(c.projectKey);
+          }
+        }
+
+        const activeDayList = [...activeDates.values()];
+        const peakDay = activeDayList.reduce(
+          (best, d) => (!best || taGetMetricVal(d, metric) > taGetMetricVal(best, metric) ? d : best),
+          null
+        );
+        const kpi = {
+          ...kpiTotals,
+          cacheRate: taCalcCacheRate(kpiTotals),
+          activeDays: activeDayList.length,
+          windowDays: state?.selectedDate ? 1 : rangeDays >= 365 ? Math.max(1, activeDayList.length) : rangeDays,
+          peakDay,
+          mainSessions: kpiRootIds.size,
+          subagentCount: kpiSubIds.size,
+          projectCount: kpiProjKeys.size
+        };
+
+        const dailyMap = new Map();
+        const dailyProjScores = new Map();
+        for (const f of facts) {
+          if (!matchesFact(f, { ignoreDate: true, ignoreRange: true })) continue;
+          let dAcc = dailyMap.get(f.date);
+          if (!dAcc) {
+            dAcc = { date: f.date, ...taMakeEmptyTotals(), topProject: '' };
+            dailyMap.set(f.date, dAcc);
+            dailyProjScores.set(f.date, new Map());
+          }
+          taAddTotals(dAcc, f);
+          const pName = conversations[f.cid]?.projectName || '';
+          if (pName) {
+            const pMap = dailyProjScores.get(f.date);
+            pMap.set(pName, (pMap.get(pName) || 0) + taGetMetricVal(f, metric));
+          }
+        }
+        for (const [dt, dAcc] of dailyMap.entries()) {
+          const top = [...(dailyProjScores.get(dt)?.entries() || [])].sort((a, b) => b[1] - a[1])[0];
+          if (top) dAcc.topProject = top[0];
+        }
+
+        const heatmap = taBuildHeatmapGrid(dailyMap, {
+          weeks: heatmapWeeks,
+          nowSec,
+          metric,
+          rangeDays,
+          selectedDate: state?.selectedDate || null,
+          rangeBounds
+        });
+        const inRangeActive = heatmap.days.filter((d) => d.inRange && d.total > 0);
+        const avgDaily =
+          inRangeActive.length > 0
+            ? inRangeActive.reduce((sum, d) => sum + taGetMetricVal(d, metric), 0) / inRangeActive.length
+            : 0;
+
+        const modelMap = new Map();
+        for (const f of facts) {
+          if (!matchesFact(f, { ignoreModel: true })) continue;
+          const key = state?.modelGroup === 'pool' ? f.pool : f.model;
+          let mAcc = modelMap.get(key);
+          if (!mAcc) {
+            mAcc = { key, pool: f.pool, ...taMakeEmptyTotals() };
+            modelMap.set(key, mAcc);
+          }
+          taAddTotals(mAcc, f);
+        }
+        const models = [...modelMap.values()]
+          .map((m) => ({ ...m, cacheRate: taCalcCacheRate(m) }))
+          .sort((a, b) => taGetMetricVal(b, metric) - taGetMetricVal(a, metric));
+
+        const scenMap = new Map();
+        for (const f of facts) {
+          if (!matchesFact(f, { ignoreScenario: true })) continue;
+          let sAcc = scenMap.get(f.scenario);
+          if (!sAcc) {
+            sAcc = { key: f.scenario, ...taMakeEmptyTotals(), subAgents: new Set() };
+            scenMap.set(f.scenario, sAcc);
+          }
+          taAddTotals(sAcc, f);
+          if (f.subagentType) sAcc.subAgents.add(f.subagentType);
+        }
+        const scenarios = [...scenMap.values()]
+          .map((s) => ({ ...s, subAgents: [...s.subAgents].sort() }))
+          .sort((a, b) => taGetMetricVal(b, metric) - taGetMetricVal(a, metric));
+
+        const rootGroups = new Map();
+        for (const f of facts) {
+          if (!matchesFact(f)) continue;
+          const c = conversations[f.cid];
+          if (!c) continue;
+          const rootId = c.rootId && conversations[c.rootId] ? c.rootId : c.id;
+          const rootInfo = conversations[rootId] || c;
+          let g = rootGroups.get(rootId);
+          if (!g) {
+            g = {
+              id: rootId,
+              title: rootInfo.title,
+              projectKey: rootInfo.projectKey,
+              projectName: rootInfo.projectName,
+              source: rootInfo.source,
+              lastTs: rootInfo.lastTs || 0,
+              isSubagentRoot: rootInfo.isSubagent,
+              agentName: rootInfo.agentName || '',
+              modelScores: new Map(),
+              scenarioScores: new Map(),
+              rolled: taMakeEmptyTotals(),
+              childrenMap: new Map()
+            };
+            rootGroups.set(rootId, g);
+          }
+          taAddTotals(g.rolled, f);
+          if (f.cid === rootId) {
+            g.modelScores.set(f.model, (g.modelScores.get(f.model) || 0) + taGetMetricVal(f, metric));
+            g.scenarioScores.set(f.scenario, (g.scenarioScores.get(f.scenario) || 0) + taGetMetricVal(f, metric));
+          } else {
+            let ch = g.childrenMap.get(f.cid);
+            if (!ch) {
+              ch = {
+                id: f.cid,
+                title: c.title,
+                agentName: c.agentName || f.subagentType || 'subagent',
+                lastTs: c.lastTs || 0,
+                modelScores: new Map(),
+                ...taMakeEmptyTotals()
+              };
+              g.childrenMap.set(f.cid, ch);
+            }
+            taAddTotals(ch, f);
+            ch.modelScores.set(f.model, (ch.modelScores.get(f.model) || 0) + taGetMetricVal(f, metric));
+            if (!g.modelScores.size) {
+              g.modelScores.set(f.model, (g.modelScores.get(f.model) || 0) + taGetMetricVal(f, metric));
+            }
+            if (!g.scenarioScores.size) {
+              g.scenarioScores.set(f.scenario, (g.scenarioScores.get(f.scenario) || 0) + taGetMetricVal(f, metric));
+            }
+          }
+        }
+
+        const baseSessions = [...rootGroups.values()].map((g) => {
+          const cacheRate = taCalcCacheRate(g.rolled);
+          const lowCacheWarning = cacheRate !== null && cacheRate < 0.8 && g.rolled.inTok >= 200000;
+          const primaryModel = [...g.modelScores.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+          const primaryScenario = [...g.scenarioScores.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'internal';
+          const children = [...g.childrenMap.values()]
+            .map((ch) => ({
+              ...ch,
+              primaryModel: [...ch.modelScores.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '',
+              cacheRate: taCalcCacheRate(ch)
+            }))
+            .sort((a, b) => taGetMetricVal(b, metric) - taGetMetricVal(a, metric));
+          const childHay = children.map((c) => `${c.title} ${c.agentName} ${c.id} ${c.primaryModel}`).join(' ');
+          const _searchHay = `${g.title} ${g.projectName} ${g.id} ${primaryModel} ${childHay}`.toLowerCase();
+          return {
+            id: g.id,
+            title: g.title,
+            projectKey: g.projectKey,
+            projectName: g.projectName,
+            source: g.source,
+            lastTs: g.lastTs,
+            primaryModel,
+            primaryScenario,
+            ...g.rolled,
+            cacheRate,
+            lowCacheWarning,
+            children,
+            _searchHay
+          };
+        });
+        const sessions = taFilterAndSortSessions(baseSessions, state);
+
+        const projMap = new Map();
+        for (const f of facts) {
+          if (!matchesFact(f, { ignoreProject: true })) continue;
+          const c = conversations[f.cid];
+          if (!c) continue;
+          let pAcc = projMap.get(c.projectKey);
+          if (!pAcc) {
+            pAcc = {
+              key: c.projectKey,
+              name: c.projectName,
+              rootIds: new Set(),
+              subIds: new Set(),
+              modelScores: new Map(),
+              ...taMakeEmptyTotals()
+            };
+            projMap.set(c.projectKey, pAcc);
+          }
+          taAddTotals(pAcc, f);
+          const rId = c.rootId && conversations[c.rootId] ? c.rootId : c.id;
+          pAcc.rootIds.add(rId);
+          if (c.isSubagent) pAcc.subIds.add(c.id);
+          pAcc.modelScores.set(f.model, (pAcc.modelScores.get(f.model) || 0) + taGetMetricVal(f, metric));
+        }
+
+        const projectsSummary = [...projMap.values()]
+          .map((p) => ({
+            key: p.key,
+            name: p.name,
+            sessionsCount: p.rootIds.size,
+            subagentCount: p.subIds.size,
+            topModel: [...p.modelScores.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '',
+            cacheRate: taCalcCacheRate(p),
+            ...taMakeEmptyTotals(),
+            calls: p.calls,
+            inTok: p.inTok,
+            cacheRead: p.cacheRead,
+            outTok: p.outTok,
+            thinkTok: p.thinkTok,
+            respTok: p.respTok,
+            total: p.total,
+            weighted: p.weighted,
+            billable: p.billable
+          }))
+          .sort((a, b) => taGetMetricVal(b, metric) - taGetMetricVal(a, metric));
+
+        return {
+          kpi,
+          heatmap,
+          avgDaily,
+          models,
+          scenarios,
+          baseSessions,
+          sessions,
+          projectsSummary
+        };
+      }
+      /* TOKEN_ANALYTICS_LOGIC_END */
+
+      const esc = (s) =>
+        String(s ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+
+      const uiState = taCreateDefaultState();
+      const dataState = {
+        loading: false,
+        error: null,
+        fetchedAt: 0,
+        lastMetricsSig: '',
+        modalClosedSinceFetch: false,
+        payload: null
+      };
+      let reqSeq = 0;
+      const pendingRequests = new Map();
+      let pendingOpenTokenTab = false;
+      let pendingOpenTimer = null;
+      let searchDebounceTimer = null;
+      let cachedBaseVm = { key: '', payloadRef: null, vm: null };
+      let tabActive = false;
+      let syncRaf = null;
+      let disposed = false;
+      let hmTooltipVisible = false;
+      let hmGlobalListenersBound = false;
+      let activeHmCell = null;
+      const hmDayByDate = new Map();
+
+      function getOrComputeViewModel() {
+        if (!dataState.payload) return null;
+        const minuteBucket = Math.floor(Date.now() / 60000);
+        const key = `${minuteBucket}|${uiState.metric}|${uiState.rangeDays}|${uiState.selectedDate || ''}|${uiState.selectedProject || 'ALL'}|${uiState.modelGroup || 'model'}|${uiState.selectedModel || ''}|${uiState.selectedScenario || ''}`;
+        if (cachedBaseVm.payloadRef === dataState.payload && cachedBaseVm.key === key && cachedBaseVm.vm) {
+          return {
+            ...cachedBaseVm.vm,
+            sessions: taFilterAndSortSessions(cachedBaseVm.vm.baseSessions, uiState)
+          };
+        }
+        const vm = taComputeViewModel(dataState.payload, uiState, { heatmapWeeks: 26 });
+        cachedBaseVm = { key, payloadRef: dataState.payload, vm };
+        return vm;
+      }
+
+      function fmtLastActive(tsSec) {
+        if (!tsSec) return '--';
+        const d = new Date(tsSec * 1000);
+        const now = new Date();
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+        const sameDay =
+          d.getFullYear() === now.getFullYear() &&
+          d.getMonth() === now.getMonth() &&
+          d.getDate() === now.getDate();
+        if (sameDay) return `今天 ${hm}`;
+        const yest = new Date(now.getTime() - 86400000);
+        const isYest =
+          d.getFullYear() === yest.getFullYear() &&
+          d.getMonth() === yest.getMonth() &&
+          d.getDate() === yest.getDate();
+        if (isYest) return `昨天 ${hm}`;
+        return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${hm}`;
+      }
+
+      window.__ag_on_token_analytics = (reqId, res) => {
+        const entry = pendingRequests.get(String(reqId || ''));
+        if (!entry) return;
+        pendingRequests.delete(String(reqId || ''));
+        clearTimeout(entry.timer);
+        if (res && res.ok && res.data) {
+          entry.resolve(res.data);
+        } else {
+          entry.reject(new Error(res?.error || '本地 Token 统计数据获取失败'));
+        }
+      };
+
+      async function fetchTokenAnalytics(force = false) {
+        if (disposed) return;
+        const now = Date.now();
+        const curMetricsSig = String(window.__ag_last_metrics?.sig || '');
+        const sigChanged = Boolean(curMetricsSig && curMetricsSig !== dataState.lastMetricsSig);
+        const reopenedStale = Boolean(dataState.modalClosedSinceFetch && now - dataState.fetchedAt > 3000);
+        if (!force && !sigChanged && !reopenedStale && dataState.payload && now - dataState.fetchedAt < CACHE_TTL_MS) {
+          return;
+        }
+        if (typeof window.__agRequestTokenAnalytics !== 'function') {
+          dataState.error = '当前运行环境未启用本地 SQLite Token 统计（需要 Node.js >= 22.13 且启用 modules.tokenAnalytics）';
+          dataState.loading = false;
+          renderPanel();
+          return;
+        }
+        if (dataState.loading && !force) return;
+
+        dataState.loading = true;
+        dataState.error = null;
+        if (dataState.payload) {
+          const panel = document.getElementById(PANEL_ID);
+          const refreshBtn = panel?.querySelector('#ag-ta-refresh-btn');
+          if (refreshBtn) {
+            refreshBtn.textContent = '刷新中…';
+            refreshBtn.disabled = true;
+          }
+        } else {
+          renderPanel();
+        }
+
+        const reqId = `ta-${Date.now()}-${++reqSeq}`;
+        try {
+          const data = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              pendingRequests.delete(reqId);
+              reject(new Error('读取本地 SQLite 统计超时 (25s)'));
+            }, REQUEST_TIMEOUT_MS);
+            pendingRequests.set(reqId, { resolve, reject, timer });
+            try {
+              window.__agRequestTokenAnalytics(JSON.stringify({ reqId, maxDays: 365, force }));
+            } catch (err) {
+              clearTimeout(timer);
+              pendingRequests.delete(reqId);
+              reject(err);
+            }
+          });
+          if (disposed) return;
+          dataState.payload = data;
+          cachedBaseVm = { key: '', payloadRef: null, vm: null };
+          dataState.fetchedAt = Date.now();
+          dataState.lastMetricsSig = String(window.__ag_last_metrics?.sig || '');
+          dataState.modalClosedSinceFetch = false;
+          dataState.error = null;
+        } catch (err) {
+          if (disposed) return;
+          dataState.error = String(err?.message || err || '获取 Token 统计失败');
+        } finally {
+          if (!disposed) {
+            dataState.loading = false;
+            renderPanel();
+          }
+        }
+      }
+
+      function findActiveSettingsModal() {
+        const containers = document.querySelectorAll('.settings-modal-container');
+        for (const container of containers) {
+          const backdrop = container.closest('.settings-modal-backdrop');
+          if (backdrop && backdrop.getAttribute('aria-hidden') === 'true') continue;
+          if (backdrop && backdrop.classList.contains('animate-modalFadeOut')) continue;
+          if (container.classList.contains('animate-modalScaleOut')) continue;
+          const r = container.getBoundingClientRect();
+          if (r.width > 200 && r.height > 200) return container;
+        }
+        return null;
+      }
+
+      function findNavMountTarget(modal) {
+        const sidebar = modal.querySelector('[data-testid="settings-sidebar"]');
+        if (!sidebar) return null;
+        const anchorBtn = sidebar.querySelector(
+          '[data-testid="settings-nav-item-Models"], [data-testid="settings-nav-item-General"], [data-testid="settings-nav-item-Appearance"]'
+        );
+        const wrap = anchorBtn?.closest('.group\\/nav-item') || anchorBtn;
+        if (wrap && wrap.parentElement) return { sidebar, container: wrap.parentElement };
+        const scrollBody = sidebar.querySelector('.overflow-y-auto');
+        if (scrollBody) return { sidebar, container: scrollBody };
+        return null;
+      }
+
+      function findRightContentMountTarget(modal, sidebar) {
+        const scrollEls = [...modal.querySelectorAll('div.overflow-auto')];
+        const nativeScroll = scrollEls.find(
+          (el) => !sidebar?.contains(el) && !el.closest('[data-ag-token-ui]')
+        );
+        if (!nativeScroll || !nativeScroll.parentElement) return null;
+        return { nativeScroll, hostParent: nativeScroll.parentElement };
+      }
+
+      function ensureHmTooltip() {
+        let tip = document.getElementById(HM_TOOLTIP_ID);
+        if (!tip && document.body) {
+          tip = document.createElement('div');
+          tip.id = HM_TOOLTIP_ID;
+          tip.setAttribute('data-ag-token-ui', '1');
+          document.body.appendChild(tip);
+        }
+        return tip;
+      }
+
+      function onGlobalDismiss() {
+        if (hmTooltipVisible) hideHmTooltip();
+      }
+      function onGlobalPointerMove(ev) {
+        if (!hmTooltipVisible) return;
+        if (!tabActive || !activeHmCell || !activeHmCell.isConnected) {
+          hideHmTooltip();
+          return;
+        }
+        const t = ev.target;
+        if (!(t instanceof Element) || !t.closest('.ag-ta-hm-cell')) {
+          hideHmTooltip();
+        }
+      }
+      function onGlobalKeyDown(ev) {
+        if (hmTooltipVisible && ev.key === 'Escape') {
+          hideHmTooltip();
+        }
+      }
+      function bindHmGlobalListeners() {
+        if (hmGlobalListenersBound || disposed) return;
+        hmGlobalListenersBound = true;
+        window.addEventListener('scroll', onGlobalDismiss, { capture: true, passive: true });
+        window.addEventListener('wheel', onGlobalDismiss, { capture: true, passive: true });
+        window.addEventListener('resize', onGlobalDismiss, { passive: true });
+        window.addEventListener('blur', onGlobalDismiss);
+        document.addEventListener('pointermove', onGlobalPointerMove, { passive: true });
+        document.addEventListener('keydown', onGlobalKeyDown, true);
+      }
+      function unbindHmGlobalListeners() {
+        if (!hmGlobalListenersBound) return;
+        hmGlobalListenersBound = false;
+        window.removeEventListener('scroll', onGlobalDismiss, true);
+        window.removeEventListener('wheel', onGlobalDismiss, true);
+        window.removeEventListener('resize', onGlobalDismiss);
+        window.removeEventListener('blur', onGlobalDismiss);
+        document.removeEventListener('pointermove', onGlobalPointerMove);
+        document.removeEventListener('keydown', onGlobalKeyDown, true);
+      }
+
+      function hideHmTooltip() {
+        hmTooltipVisible = false;
+        activeHmCell = null;
+        unbindHmGlobalListeners();
+        const tip = document.getElementById(HM_TOOLTIP_ID);
+        if (tip && tip.getAttribute('data-visible') !== '0') {
+          tip.setAttribute('data-visible', '0');
+        }
+      }
+
+      function positionHmTooltip(tip, cell) {
+        if (!tip || !cell || !cell.isConnected) {
+          hideHmTooltip();
+          return;
+        }
+        const rect = cell.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) {
+          hideHmTooltip();
+          return;
+        }
+        const tipRect = tip.getBoundingClientRect();
+        const tw = tipRect.width || 225;
+        const th = tipRect.height || 120;
+        const x = Math.max(8, Math.min(window.innerWidth - tw - 8, rect.left + rect.width / 2 - tw / 2));
+        let y = rect.top - th - 8;
+        if (y < 8) {
+          y = Math.min(window.innerHeight - th - 8, rect.bottom + 8);
+        }
+        tip.style.left = `${Math.round(x)}px`;
+        tip.style.top = `${Math.round(y)}px`;
+      }
+
+      function showHmTooltipForCell(cell) {
+        if (!cell || !cell.isConnected || !tabActive) return;
+        const dt = cell.getAttribute('data-hm-date') || '';
+        const d = hmDayByDate.get(dt);
+        if (!d) return;
+        const tip = ensureHmTooltip();
+        if (!tip) return;
+        const cRate = taCalcCacheRate(d);
+        const cRateStr = cRate !== null ? `${(cRate * 100).toFixed(1)}%` : '--';
+        tip.innerHTML =
+          `<div class="ag-ta-tt-hdr ag-ta-mono">` +
+          `  <span>${esc(d.date)}</span>` +
+          `  <span style="color:var(--ag-ta-primary);">${esc(taFormatMetricVal(d, uiState.metric))}</span>` +
+          `</div>` +
+          (d.calls > 0
+            ? `<div class="ag-ta-tt-row"><span>加权等效</span><strong class="ag-ta-mono">${taFormatCompact(d.weighted)}</strong></div>` +
+              `<div class="ag-ta-tt-row"><span>总 Tokens</span><strong class="ag-ta-mono">${taFormatCompact(d.total)}</strong></div>` +
+              `<div class="ag-ta-tt-row"><span>新入 / 缓读 / 出</span><strong class="ag-ta-mono">${taFormatCompact(d.inTok)} / ${taFormatCompact(d.cacheRead)} / ${taFormatCompact(d.outTok)}</strong></div>` +
+              `<div class="ag-ta-tt-row"><span>调用 / 缓存命中</span><strong class="ag-ta-mono">${d.calls} 次 · ${cRateStr}</strong></div>` +
+              (d.topProject
+                ? `<div class="ag-ta-tt-row" style="margin-top:4px;padding-top:4px;border-top:1px solid var(--ag-ta-border);"><span>主力项目</span><strong>${esc(d.topProject)}</strong></div>`
+                : '')
+            : `<div style="color:var(--ag-ta-muted);">当日无本地调用记录</div>`);
+        activeHmCell = cell;
+        hmTooltipVisible = true;
+        bindHmGlobalListeners();
+        tip.setAttribute('data-visible', '1');
+        positionHmTooltip(tip, cell);
+      }
+
+      function ensurePanelSkeleton(panel) {
+        if (panel.dataset.agSkeletonReady === '1') return;
+        panel.dataset.agSkeletonReady = '1';
+        panel.innerHTML = `
+      <div class="ag-ta-wrap">
+        <div class="ag-ta-hdr">
+          <div>
+            <div class="ag-ta-title-row">
+              <h1 class="ag-ta-h1">Token 消耗分析</h1>
+              <span id="ag-ta-header-badge" class="ag-ta-pill-meta ag-ta-mono">待同步</span>
+            </div>
+            <p class="ag-ta-sub">基于本机 <span class="ag-ta-mono">conversations/*.db</span> 与 <span class="ag-ta-mono">conversation_summaries.db</span> 增量归因（默认主指标：加权等效）</p>
+          </div>
+          <div class="ag-ta-controls">
+            <div class="ag-ta-seg" id="ag-ta-metric-sw">
+              <button type="button" class="ag-ta-seg-btn active" data-metric="weighted">加权等效</button>
+              <button type="button" class="ag-ta-seg-btn" data-metric="total">总 Tokens</button>
+              <button type="button" class="ag-ta-seg-btn" data-metric="billable">净新消耗</button>
+              <button type="button" class="ag-ta-seg-btn" data-metric="calls">调用次数</button>
+            </div>
+            <div class="ag-ta-seg" id="ag-ta-range-sw">
+              <button type="button" class="ag-ta-seg-btn" data-range="1">今日</button>
+              <button type="button" class="ag-ta-seg-btn" data-range="7">7天</button>
+              <button type="button" class="ag-ta-seg-btn active" data-range="30">30天</button>
+              <button type="button" class="ag-ta-seg-btn" data-range="90">90天</button>
+              <button type="button" class="ag-ta-seg-btn" data-range="365">全部</button>
+            </div>
+            <button type="button" id="ag-ta-refresh-btn" class="ag-ta-refresh" title="点击增量刷新；按住 Shift 点击强制忽略磁盘缓存全量重算">刷新</button>
+          </div>
+        </div>
+
+        <div id="ag-ta-filters-bar" class="ag-ta-filters-bar" hidden>
+          <span>当前联动筛选：</span>
+          <div id="ag-ta-filter-pills" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+          <button type="button" id="ag-ta-clear-filters" class="ag-ta-clear-btn">清除全部</button>
+        </div>
+
+        <div id="ag-ta-status-banner" class="ag-ta-banner" hidden></div>
+
+        <div id="ag-ta-kpi-grid" class="ag-ta-kpis"></div>
+
+        <section class="ag-ta-card">
+          <div class="ag-ta-card-head">
+            <div>
+              <h2 class="ag-ta-card-h2">按日消耗记录</h2>
+              <p class="ag-ta-card-desc">悬停查看单日详情，点击任意日期格子可联动过滤下方模型、场景与会话</p>
+            </div>
+            <div class="ag-ta-controls">
+              <div class="ag-ta-seg" id="ag-ta-daily-sw">
+                <button type="button" class="ag-ta-seg-btn active" data-dmode="heatmap">贡献网格</button>
+                <button type="button" class="ag-ta-seg-btn" data-dmode="bars">近14日趋势</button>
+              </div>
+              <div id="ag-ta-hm-legend" class="ag-ta-hm-legend">
+                <span>少</span>
+                <span class="ag-ta-hm-sw" data-lvl="0"></span>
+                <span class="ag-ta-hm-sw" data-lvl="1"></span>
+                <span class="ag-ta-hm-sw" data-lvl="2"></span>
+                <span class="ag-ta-hm-sw" data-lvl="3"></span>
+                <span class="ag-ta-hm-sw" data-lvl="4"></span>
+                <span>多</span>
+              </div>
+            </div>
+          </div>
+          <div id="ag-ta-hm-wrap" class="ag-ta-hm-scroll">
+            <div class="ag-ta-hm-inner">
+              <div id="ag-ta-hm-months" class="ag-ta-hm-months"></div>
+              <div class="ag-ta-hm-body">
+                <div class="ag-ta-hm-days"><span>一</span><span>三</span><span>五</span><span>日</span></div>
+                <div id="ag-ta-hm-grid" class="ag-ta-hm-grid"></div>
+              </div>
+            </div>
+          </div>
+          <div id="ag-ta-bars-wrap" hidden>
+            <div id="ag-ta-bars-chart" class="ag-ta-bars-chart"></div>
+            <div class="ag-ta-legend" style="justify-content:flex-end;border-top:none;margin-top:4px;padding-top:4px;">
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-in"></span>新输入</span>
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-cache"></span>缓存读取</span>
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-out"></span>输出（含思考）</span>
+            </div>
+          </div>
+          <div id="ag-ta-daily-footer" class="ag-ta-foot"></div>
+        </section>
+
+        <section class="ag-ta-split">
+          <div class="ag-ta-card ag-ta-card-col">
+            <div class="ag-ta-card-head">
+              <div>
+                <h2 class="ag-ta-card-h2">按模型统计</h2>
+                <p class="ag-ta-card-desc">点击模型行联动过滤</p>
+              </div>
+              <div class="ag-ta-seg" id="ag-ta-model-sw">
+                <button type="button" class="ag-ta-seg-btn active" data-mg="model">具体模型</button>
+                <button type="button" class="ag-ta-seg-btn" data-mg="pool">配额池</button>
+              </div>
+            </div>
+            <div id="ag-ta-model-list" class="ag-ta-list"></div>
+            <div class="ag-ta-legend">
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-in"></span>新输入</span>
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-cache"></span>缓存命中</span>
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-think"></span>思考</span>
+              <span class="ag-ta-legend-item"><span class="ag-ta-swatch ag-ta-seg-out"></span>正文回复</span>
+            </div>
+          </div>
+
+          <div class="ag-ta-card ag-ta-card-col">
+            <div class="ag-ta-card-head">
+              <div>
+                <h2 class="ag-ta-card-h2">按场景统计</h2>
+                <p class="ag-ta-card-desc">工具执行 / 子 Agent / 纯对话 / 规划 / 记忆压缩</p>
+              </div>
+              <span class="ag-ta-badge" title="所有数字来自本机已落盘的 conversations/*.db，不含未落盘的云端静默后台任务">本地轨迹口径</span>
+            </div>
+            <div id="ag-ta-scenario-list" class="ag-ta-list"></div>
+            <div class="ag-ta-foot">
+              <span>仅统计本地已落盘对话轨迹；点击场景行可联动筛选</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="ag-ta-card">
+          <div class="ag-ta-card-head">
+            <div>
+              <h2 class="ag-ta-card-h2">按会话与项目统计</h2>
+              <p class="ag-ta-card-desc">同名项目已合并大小写并折叠 <span class="ag-ta-mono">/tmp</span>，支持父会话展开子 Agent 轨迹</p>
+            </div>
+            <div class="ag-ta-seg" id="ag-ta-explorer-sw">
+              <button type="button" class="ag-ta-seg-btn active" data-emode="sessions">会话明细</button>
+              <button type="button" class="ag-ta-seg-btn" data-emode="projects">项目汇总</button>
+            </div>
+          </div>
+
+          <div id="ag-ta-project-chips" class="ag-ta-chips"></div>
+
+          <div class="ag-ta-toolbar">
+            <div class="ag-ta-search-wrap">
+              <svg class="ag-ta-search-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              <input id="ag-ta-search-input" class="ag-ta-input" type="text" placeholder="搜索会话标题、项目名或 ID…" />
+            </div>
+            <select id="ag-ta-sort-select" class="ag-ta-select">
+              <option value="metric">排序：按当前指标</option>
+              <option value="weighted">排序：加权等效</option>
+              <option value="total">排序：总 Tokens</option>
+              <option value="inTok">排序：未缓存输入</option>
+              <option value="outTok">排序：输出 Tokens</option>
+              <option value="calls">排序：调用次数</option>
+              <option value="lowCache">排序：低缓存命中优先</option>
+              <option value="recent">排序：最近活跃</option>
+            </select>
+            <label class="ag-ta-check-lbl">
+              <input id="ag-ta-lowcache-cb" type="checkbox" />
+              <span>仅低缓存预警 (&lt;80%)</span>
+            </label>
+          </div>
+
+          <div id="ag-ta-sessions-wrap" class="ag-ta-table-wrap">
+            <table class="ag-ta-table">
+              <thead>
+                <tr>
+                  <th>会话 / 项目</th>
+                  <th>主力模型 &amp; 场景</th>
+                  <th class="ag-ta-num">调用</th>
+                  <th class="ag-ta-num">消耗与构成</th>
+                  <th class="ag-ta-num">缓存命中</th>
+                  <th class="ag-ta-num">最近活跃</th>
+                </tr>
+              </thead>
+              <tbody id="ag-ta-sessions-tbody"></tbody>
+            </table>
+          </div>
+
+          <div id="ag-ta-projects-wrap" class="ag-ta-proj-grid" hidden></div>
+        </section>
+      </div>
+    `;
+
+        panel.querySelectorAll('#ag-ta-metric-sw .ag-ta-seg-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            uiState.metric = btn.getAttribute('data-metric') || 'weighted';
+            renderPanel();
+          });
+        });
+        panel.querySelectorAll('#ag-ta-range-sw .ag-ta-seg-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const nextRange = Number(btn.getAttribute('data-range') || 30);
+            uiState.rangeDays = nextRange;
+            if (uiState.selectedDate && !taIsDateInRange(uiState.selectedDate, nextRange, dataState.payload?.nowSec)) {
+              uiState.selectedDate = null;
+            }
+            renderPanel();
+          });
+        });
+        panel.querySelectorAll('#ag-ta-daily-sw .ag-ta-seg-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            uiState.dailyMode = btn.getAttribute('data-dmode') || 'heatmap';
+            renderPanel();
+          });
+        });
+        panel.querySelectorAll('#ag-ta-model-sw .ag-ta-seg-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            uiState.modelGroup = btn.getAttribute('data-mg') || 'model';
+            uiState.selectedModel = null;
+            renderPanel();
+          });
+        });
+        panel.querySelectorAll('#ag-ta-explorer-sw .ag-ta-seg-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            uiState.explorerMode = btn.getAttribute('data-emode') || 'sessions';
+            renderPanel();
+          });
+        });
+        panel.querySelector('#ag-ta-refresh-btn')?.addEventListener('click', (ev) => {
+          void fetchTokenAnalytics(ev?.shiftKey ? 'hard' : true);
+        });
+        panel.querySelector('#ag-ta-clear-filters')?.addEventListener('click', () => {
+          uiState.selectedDate = null;
+          uiState.selectedProject = 'ALL';
+          uiState.selectedModel = null;
+          uiState.selectedScenario = null;
+          renderPanel();
+        });
+        panel.querySelector('#ag-ta-search-input')?.addEventListener('input', (e) => {
+          uiState.search = e.target.value || '';
+          if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+          searchDebounceTimer = setTimeout(() => {
+            searchDebounceTimer = null;
+            renderExplorerOnly();
+          }, 80);
+        });
+        panel.querySelector('#ag-ta-sort-select')?.addEventListener('change', (e) => {
+          uiState.sort = e.target.value || 'metric';
+          renderExplorerOnly();
+        });
+        panel.querySelector('#ag-ta-lowcache-cb')?.addEventListener('change', (e) => {
+          uiState.onlyLowCache = Boolean(e.target.checked);
+          renderExplorerOnly();
+        });
+        panel.addEventListener('scroll', hideHmTooltip, { passive: true });
+        panel.addEventListener('wheel', hideHmTooltip, { passive: true });
+        panel.querySelector('#ag-ta-hm-wrap')?.addEventListener('scroll', hideHmTooltip, { passive: true });
+        const hmGrid = panel.querySelector('#ag-ta-hm-grid');
+        if (hmGrid) {
+          hmGrid.addEventListener('pointerover', (ev) => {
+            const cell = ev.target instanceof Element ? ev.target.closest('.ag-ta-hm-cell') : null;
+            if (cell) showHmTooltipForCell(cell);
+            else hideHmTooltip();
+          });
+          hmGrid.addEventListener('pointerleave', hideHmTooltip);
+          hmGrid.addEventListener('mouseleave', hideHmTooltip);
+          hmGrid.addEventListener('click', (ev) => {
+            const cell = ev.target instanceof Element ? ev.target.closest('.ag-ta-hm-cell') : null;
+            if (!cell) return;
+            const dt = cell.getAttribute('data-hm-date');
+            if (!dt) return;
+            hideHmTooltip();
+            uiState.selectedDate = uiState.selectedDate === dt ? null : dt;
+            renderPanel();
+          });
+        }
+      }
+
+      function syncPanelSwitchers(panel) {
+        panel.querySelectorAll('#ag-ta-metric-sw .ag-ta-seg-btn').forEach((b) => {
+          b.classList.toggle('active', b.getAttribute('data-metric') === uiState.metric);
+        });
+        panel.querySelectorAll('#ag-ta-range-sw .ag-ta-seg-btn').forEach((b) => {
+          b.classList.toggle('active', Number(b.getAttribute('data-range')) === uiState.rangeDays);
+        });
+        panel.querySelectorAll('#ag-ta-daily-sw .ag-ta-seg-btn').forEach((b) => {
+          b.classList.toggle('active', b.getAttribute('data-dmode') === uiState.dailyMode);
+        });
+        panel.querySelectorAll('#ag-ta-model-sw .ag-ta-seg-btn').forEach((b) => {
+          b.classList.toggle('active', b.getAttribute('data-mg') === uiState.modelGroup);
+        });
+        panel.querySelectorAll('#ag-ta-explorer-sw .ag-ta-seg-btn').forEach((b) => {
+          b.classList.toggle('active', b.getAttribute('data-emode') === uiState.explorerMode);
+        });
+        const hmWrap = panel.querySelector('#ag-ta-hm-wrap');
+        const hmLeg = panel.querySelector('#ag-ta-hm-legend');
+        const barsWrap = panel.querySelector('#ag-ta-bars-wrap');
+        if (hmWrap) hmWrap.hidden = uiState.dailyMode !== 'heatmap';
+        if (hmLeg) hmLeg.hidden = uiState.dailyMode !== 'heatmap';
+        if (barsWrap) barsWrap.hidden = uiState.dailyMode !== 'bars';
+
+        const sessWrap = panel.querySelector('#ag-ta-sessions-wrap');
+        const projWrap = panel.querySelector('#ag-ta-projects-wrap');
+        if (sessWrap) sessWrap.hidden = uiState.explorerMode !== 'sessions';
+        if (projWrap) projWrap.hidden = uiState.explorerMode !== 'projects';
+
+        const searchInput = panel.querySelector('#ag-ta-search-input');
+        if (searchInput && searchInput.value !== uiState.search) searchInput.value = uiState.search;
+        const sortSelect = panel.querySelector('#ag-ta-sort-select');
+        if (sortSelect && sortSelect.value !== uiState.sort) sortSelect.value = uiState.sort;
+        const lowCacheCb = panel.querySelector('#ag-ta-lowcache-cb');
+        if (lowCacheCb && lowCacheCb.checked !== uiState.onlyLowCache) lowCacheCb.checked = uiState.onlyLowCache;
+      }
+
+      function renderExplorerSections(panel, vm) {
+        const projects = dataState.payload?.projects || [];
+        const chipsEl = panel.querySelector('#ag-ta-project-chips');
+        if (chipsEl) {
+          const chipList = [{ key: 'ALL', name: '全部项目' }, ...projects];
+          chipsEl.innerHTML = chipList
+            .map(
+              (p) =>
+                `<button type="button" class="ag-ta-chip ${uiState.selectedProject === p.key ? 'active' : ''}" data-proj-key="${esc(p.key)}">${esc(p.name)}</button>`
+            )
+            .join('');
+          chipsEl.querySelectorAll('[data-proj-key]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              uiState.selectedProject = btn.getAttribute('data-proj-key') || 'ALL';
+              renderPanel();
+            });
+          });
+        }
+
+        const tbody = panel.querySelector('#ag-ta-sessions-tbody');
+        if (tbody) {
+          if (!vm || vm.sessions.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="ag-ta-empty">${
+              dataState.loading ? '正在扫描本地会话数据库…' : '当前筛选条件下没有匹配的会话记录'
+            }</td></tr>`;
+          } else {
+            const rowsHtml = [];
+            for (const s of vm.sessions.slice(0, 80)) {
+              const hasKids = s.children.length > 0;
+              const isExp = uiState.expandedIds.has(s.id);
+              const tot = Math.max(1, s.total);
+              const inP = (s.inTok / tot) * 100;
+              const cP = (s.cacheRead / tot) * 100;
+              const oP = Math.max(0, 100 - inP - cP);
+              const rateText = s.cacheRate !== null ? `${(s.cacheRate * 100).toFixed(1)}%` : '--';
+              const scenLabel = TA_SCENARIO_META[s.primaryScenario]?.label || s.primaryScenario;
+
+              rowsHtml.push(
+                `<tr>` +
+                  `<td class="ag-ta-sess-td"><div class="ag-ta-sess-cell">` +
+                  (hasKids
+                    ? `<button type="button" class="ag-ta-exp-btn" data-toggle-sub="${esc(s.id)}">${isExp ? '▾' : '▸'}</button>`
+                    : `<span class="ag-ta-exp-pad"></span>`) +
+                  `<div style="min-width:0;flex:1 1 auto;">` +
+                  `<div class="ag-ta-sess-title" title="${esc(s.title)}">${esc(s.title)}</div>` +
+                  `<div class="ag-ta-sess-tags">` +
+                  `<span class="ag-ta-badge ag-ta-mono" title="${esc(s.projectName)}">${esc(s.projectName)}</span>` +
+                  (s.source === 'cli' ? `<span class="ag-ta-badge ag-ta-mono">CLI</span>` : '') +
+                  (hasKids ? `<span class="ag-ta-sub-badge">含 ${s.children.length} 个子 Agent</span>` : '') +
+                  `<span class="ag-ta-mono" style="color:var(--ag-ta-muted);font-size:11px;">${esc(s.id.slice(0, 8))}</span>` +
+                  `</div></div></div></td>` +
+                  `<td class="ag-ta-model-td">` +
+                  `<div class="ag-ta-model-cell" title="${esc(s.primaryModel || '--')}">${esc(s.primaryModel || '--')}</div>` +
+                  `<div style="color:var(--ag-ta-muted);font-size:11px;margin-top:2px;">${esc(scenLabel)}</div>` +
+                  `</td>` +
+                  `<td class="ag-ta-num ag-ta-mono">${s.calls}</td>` +
+                  `<td class="ag-ta-num">` +
+                  `<div class="ag-ta-mono" style="font-weight:600;">${esc(taFormatMetricVal(s, uiState.metric))}</div>` +
+                  `<div class="ag-ta-mini-bar" title="新入 ${taFormatCompact(s.inTok)} · 缓读 ${taFormatCompact(s.cacheRead)} · 出 ${taFormatCompact(s.outTok)}">` +
+                  `<div class="ag-ta-seg-in" style="width:${inP}%"></div>` +
+                  `<div class="ag-ta-seg-cache" style="width:${cP}%"></div>` +
+                  `<div class="ag-ta-seg-out" style="width:${oP}%"></div>` +
+                  `</div>` +
+                  `</td>` +
+                  `<td class="ag-ta-num ag-ta-mono"><span class="${s.lowCacheWarning ? 'ag-ta-lowcache' : ''}">${rateText}</span></td>` +
+                  `<td class="ag-ta-num ag-ta-mono" style="color:var(--ag-ta-muted);">${esc(fmtLastActive(s.lastTs))}</td>` +
+                  `</tr>`
+              );
+
+              if (hasKids && isExp) {
+                for (const c of s.children) {
+                  const cRate = c.cacheRate !== null ? `${(c.cacheRate * 100).toFixed(1)}%` : '--';
+                  rowsHtml.push(
+                    `<tr class="ag-ta-subrow">` +
+                      `<td class="ag-ta-sess-td" style="padding-left:24px;">` +
+                      `<div style="display:flex;align-items:center;gap:6px;max-width:100%;min-width:0;">` +
+                      `<span style="color:var(--ag-ta-muted);">↳</span>` +
+                      `<span class="ag-ta-badge ag-ta-mono">${esc(c.agentName)}</span>` +
+                      `<span style="color:var(--ag-ta-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(c.title)}">${esc(c.title)}</span>` +
+                      `</div></td>` +
+                      `<td class="ag-ta-model-td" style="color:var(--ag-ta-muted);"><div class="ag-ta-model-cell" title="${esc(c.primaryModel || '--')}">${esc(c.primaryModel || '--')}</div></td>` +
+                      `<td class="ag-ta-num ag-ta-mono" style="color:var(--ag-ta-muted);">${c.calls}</td>` +
+                      `<td class="ag-ta-num ag-ta-mono" style="color:var(--ag-ta-muted);">${esc(taFormatMetricVal(c, uiState.metric))}</td>` +
+                      `<td class="ag-ta-num ag-ta-mono" style="color:var(--ag-ta-muted);">${cRate}</td>` +
+                      `<td class="ag-ta-num ag-ta-mono" style="color:var(--ag-ta-muted);">子轨迹</td>` +
+                      `</tr>`
+                  );
+                }
+              }
+            }
+            tbody.innerHTML = rowsHtml.join('');
+            tbody.querySelectorAll('[data-toggle-sub]').forEach((btn) => {
+              btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-toggle-sub');
+                if (!id) return;
+                if (uiState.expandedIds.has(id)) uiState.expandedIds.delete(id);
+                else uiState.expandedIds.add(id);
+                renderExplorerOnly();
+              });
+            });
+          }
+        }
+
+        const projWrap = panel.querySelector('#ag-ta-projects-wrap');
+        if (projWrap) {
+          if (!vm || vm.projectsSummary.length === 0) {
+            projWrap.innerHTML = `<div class="ag-ta-empty" style="grid-column:1/-1;">当前筛选条件下无项目数据</div>`;
+          } else {
+            const projSum = Math.max(1, vm.projectsSummary.reduce((acc, p) => acc + taGetMetricVal(p, uiState.metric), 0));
+            projWrap.innerHTML = vm.projectsSummary
+              .map((p) => {
+                const share = (taGetMetricVal(p, uiState.metric) / projSum) * 100;
+                const rate = p.cacheRate !== null ? `${(p.cacheRate * 100).toFixed(1)}%` : '--';
+                return (
+                  `<div class="ag-ta-proj-card" data-proj-card="${esc(p.key)}">` +
+                  `  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">` +
+                  `    <span class="ag-ta-mono" style="font-weight:600;font-size:13px;">${esc(p.name)}</span>` +
+                  `    <span class="ag-ta-mono" style="font-weight:600;color:var(--ag-ta-primary);">${esc(taFormatMetricVal(p, uiState.metric))}</span>` +
+                  `  </div>` +
+                  `  <div class="ag-ta-track" style="margin:7px 0;"><div class="ag-ta-track-inner" style="width:${Math.max(4, share)}%;background-color:var(--ag-ta-primary);"></div></div>` +
+                  `  <div class="ag-ta-mono" style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--ag-ta-muted);">` +
+                  `    <span>${p.sessionsCount} 会话 · ${p.subagentCount} 个子 Agent · ${p.calls} 次</span>` +
+                  `    <span>缓存 ${rate} · 占 ${share.toFixed(1)}%</span>` +
+                  `  </div>` +
+                  `  <div style="margin-top:5px;font-size:11.5px;color:var(--ag-ta-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">主力模型：${esc(p.topModel || '--')}</div>` +
+                  `</div>`
+                );
+              })
+              .join('');
+            projWrap.querySelectorAll('[data-proj-card]').forEach((card) => {
+              card.addEventListener('click', () => {
+                uiState.selectedProject = card.getAttribute('data-proj-card') || 'ALL';
+                uiState.explorerMode = 'sessions';
+                renderPanel();
+              });
+            });
+          }
+        }
+      }
+
+      function renderExplorerOnly() {
+        const panel = document.getElementById(PANEL_ID);
+        if (!panel || !dataState.payload) return;
+        const vm = getOrComputeViewModel();
+        if (!vm) return;
+        renderExplorerSections(panel, vm);
+      }
+
+      function renderPanel() {
+        const panel = document.getElementById(PANEL_ID);
+        if (!panel || panel.hidden) return;
+        ensurePanelSkeleton(panel);
+        syncPanelSwitchers(panel);
+
+        const refreshBtn = panel.querySelector('#ag-ta-refresh-btn');
+        if (refreshBtn) {
+          refreshBtn.textContent = dataState.loading ? '刷新中…' : '刷新';
+          refreshBtn.disabled = Boolean(dataState.loading);
+        }
+
+        const banner = panel.querySelector('#ag-ta-status-banner');
+        if (banner) {
+          if (dataState.error) {
+            banner.hidden = false;
+            banner.setAttribute('data-kind', 'error');
+            banner.textContent = dataState.error;
+          } else if (dataState.loading && !dataState.payload) {
+            banner.hidden = false;
+            banner.removeAttribute('data-kind');
+            banner.textContent = '正在从本地 SQLite 增量统计全部会话消耗…';
+          } else {
+            banner.hidden = true;
+          }
+        }
+
+        const badge = panel.querySelector('#ag-ta-header-badge');
+        const st = dataState.payload?.stats;
+        if (badge && st) {
+          badge.textContent = `${st.scannedDbs}/${st.dbCount} 会话库 · ${st.totalCalls} 次调用 · ${dataState.payload.elapsedMs}ms`;
+        }
+
+        const filterPills = [];
+        if (uiState.selectedDate) {
+          filterPills.push({ label: `日期: ${uiState.selectedDate}`, clear: () => { uiState.selectedDate = null; renderPanel(); } });
+        }
+        if (uiState.selectedProject !== 'ALL') {
+          const pName = dataState.payload?.projects?.find((p) => p.key === uiState.selectedProject)?.name || uiState.selectedProject;
+          filterPills.push({ label: `项目: ${pName}`, clear: () => { uiState.selectedProject = 'ALL'; renderPanel(); } });
+        }
+        if (uiState.selectedModel) {
+          filterPills.push({ label: `模型: ${uiState.selectedModel}`, clear: () => { uiState.selectedModel = null; renderPanel(); } });
+        }
+        if (uiState.selectedScenario) {
+          filterPills.push({ label: `场景: ${TA_SCENARIO_META[uiState.selectedScenario]?.label || uiState.selectedScenario}`, clear: () => { uiState.selectedScenario = null; renderPanel(); } });
+        }
+
+        const fBar = panel.querySelector('#ag-ta-filters-bar');
+        const fWrap = panel.querySelector('#ag-ta-filter-pills');
+        if (fBar && fWrap) {
+          fBar.hidden = filterPills.length === 0;
+          fWrap.innerHTML = '';
+          for (const fp of filterPills) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'ag-ta-filter-pill';
+            b.innerHTML = `<span>${esc(fp.label)}</span><span style="opacity:0.65;">×</span>`;
+            b.addEventListener('click', fp.clear);
+            fWrap.appendChild(b);
+          }
+        }
+
+        if (!dataState.payload) return;
+
+        const vm = getOrComputeViewModel();
+        if (!vm) return;
+        const kpi = vm.kpi;
+        const metricLabels = {
+          weighted: '加权等效消耗（主指标）',
+          total: '总消耗 Tokens',
+          billable: '净新消耗（非缓存）',
+          calls: 'LLM 总调用次数'
+        };
+        const ratePct = kpi.cacheRate !== null ? (kpi.cacheRate * 100).toFixed(1) : '--';
+        const rateTone = kpi.cacheRate !== null ? (kpi.cacheRate >= 0.8 ? 'ok' : 'warn') : '';
+        const peakText = kpi.peakDay
+          ? `${kpi.peakDay.date.slice(5)} (${taFormatMetricVal(kpi.peakDay, uiState.metric)})`
+          : '--';
+
+        const kpiEl = panel.querySelector('#ag-ta-kpi-grid');
+        if (kpiEl) {
+          kpiEl.innerHTML =
+            `<div class="ag-ta-card">` +
+            `  <div class="ag-ta-kpi-lbl">${esc(metricLabels[uiState.metric])}</div>` +
+            `  <div class="ag-ta-kpi-val ag-ta-mono">${esc(taFormatMetricVal(kpi, uiState.metric))}</div>` +
+            `  <div class="ag-ta-kpi-sub ag-ta-mono">新入 ${taFormatCompact(kpi.inTok)} · 缓读 ${taFormatCompact(kpi.cacheRead)} · 出 ${taFormatCompact(kpi.outTok)}</div>` +
+            `</div>` +
+            `<div class="ag-ta-card">` +
+            `  <div class="ag-ta-kpi-lbl">平均缓存命中率</div>` +
+            `  <div class="ag-ta-kpi-val ag-ta-mono" data-tone="${rateTone}">${ratePct === '--' ? '--' : `${ratePct}%`}</div>` +
+            `  <div class="ag-ta-kpi-sub">总输入 <span class="ag-ta-mono">${taFormatCompact(kpi.inTok + kpi.cacheRead)}</span> · 思考 <span class="ag-ta-mono">${taFormatCompact(kpi.thinkTok)}</span></div>` +
+            `</div>` +
+            `<div class="ag-ta-card">` +
+            `  <div class="ag-ta-kpi-lbl">活跃天数 &amp; 单日峰值</div>` +
+            `  <div class="ag-ta-kpi-val ag-ta-mono">${kpi.activeDays} <span style="font-size:12px;font-weight:400;color:var(--ag-ta-muted);">/ ${kpi.windowDays} 天</span></div>` +
+            `  <div class="ag-ta-kpi-sub ag-ta-mono">峰值 ${esc(peakText)}</div>` +
+            `</div>` +
+            `<div class="ag-ta-card">` +
+            `  <div class="ag-ta-kpi-lbl">归因覆盖范围</div>` +
+            `  <div class="ag-ta-kpi-val ag-ta-mono">${kpi.mainSessions} <span style="font-size:12px;font-weight:400;color:var(--ag-ta-muted);">主会话</span></div>` +
+            `  <div class="ag-ta-kpi-sub">覆盖 <span class="ag-ta-mono">${kpi.projectCount}</span> 个项目 · 含 <span class="ag-ta-mono">${kpi.subagentCount}</span> 个子 Agent</div>` +
+            `</div>`;
+        }
+
+        const monthsBar = panel.querySelector('#ag-ta-hm-months');
+        const gridEl = panel.querySelector('#ag-ta-hm-grid');
+        if (monthsBar && gridEl) {
+          hideHmTooltip();
+          hmDayByDate.clear();
+          monthsBar.innerHTML = '';
+          gridEl.innerHTML = '';
+          let lastMonth = -1;
+          for (const wk of vm.heatmap.weeks) {
+            const firstDay = wk.find(Boolean);
+            const mLbl = document.createElement('div');
+            mLbl.className = 'ag-ta-hm-mlbl';
+            if (firstDay && firstDay.month !== lastMonth) {
+              mLbl.textContent = `${firstDay.month}月`;
+              lastMonth = firstDay.month;
+            }
+            monthsBar.appendChild(mLbl);
+
+            const col = document.createElement('div');
+            col.className = 'ag-ta-hm-col';
+            for (const d of wk) {
+              if (!d) {
+                const pad = document.createElement('div');
+                pad.className = 'ag-ta-hm-pad';
+                col.appendChild(pad);
+                continue;
+              }
+              const cell = document.createElement('div');
+              cell.className =
+                'ag-ta-hm-cell' +
+                (d.selected ? ' selected' : '') +
+                (!d.inRange && !uiState.selectedDate ? ' out-range' : '');
+              cell.setAttribute('data-lvl', String(d.level));
+              cell.setAttribute('data-hm-date', d.date);
+              hmDayByDate.set(d.date, d);
+              col.appendChild(cell);
+            }
+            gridEl.appendChild(col);
+          }
+        }
+
+        const barsEl = panel.querySelector('#ag-ta-bars-chart');
+        if (barsEl) {
+          const last14 = vm.heatmap.last14;
+          const max14 = Math.max(1, ...last14.map((d) => taGetMetricVal(d, uiState.metric)));
+          barsEl.innerHTML = last14
+            .map((d) => {
+              const val = taGetMetricVal(d, uiState.metric);
+              const hPct = Math.max(val > 0 ? 6 : 2, Math.round((val / max14) * 100));
+              const sum = Math.max(1, d.total);
+              const inP = (d.inTok / sum) * 100;
+              const cP = (d.cacheRead / sum) * 100;
+              const oP = Math.max(0, 100 - inP - cP);
+              return (
+                `<div class="ag-ta-bar-col ${d.selected ? 'selected' : ''}" data-bar-date="${esc(d.date)}" title="${esc(d.date)}: ${esc(taFormatMetricVal(d, uiState.metric))}">` +
+                `  <div class="ag-ta-bar-val ag-ta-mono">${esc(taFormatMetricVal(d, uiState.metric))}</div>` +
+                `  <div class="ag-ta-bar-stack" style="height:${hPct}%;">` +
+                `    <div class="ag-ta-seg-out" style="height:${oP}%;"></div>` +
+                `    <div class="ag-ta-seg-cache" style="height:${cP}%;"></div>` +
+                `    <div class="ag-ta-seg-in" style="height:${inP}%;"></div>` +
+                `  </div>` +
+                `  <div class="ag-ta-bar-dt ag-ta-mono">${esc(d.date.slice(8))}</div>` +
+                `</div>`
+              );
+            })
+            .join('');
+          barsEl.querySelectorAll('[data-bar-date]').forEach((col) => {
+            col.addEventListener('click', () => {
+              const dt = col.getAttribute('data-bar-date');
+              uiState.selectedDate = uiState.selectedDate === dt ? null : dt;
+              renderPanel();
+            });
+          });
+        }
+
+        const dailyFoot = panel.querySelector('#ag-ta-daily-footer');
+        if (dailyFoot) {
+          const avgStr =
+            uiState.metric === 'calls' ? `${Math.round(vm.avgDaily)} 次/日` : `${taFormatCompact(vm.avgDaily)}/日`;
+          dailyFoot.innerHTML =
+            `<div style="display:flex;flex-wrap:wrap;gap:14px;">` +
+            `  <span>当前连续活跃：<strong class="ag-ta-mono" style="color:var(--ag-ta-fg);">${vm.heatmap.streak} 天</strong></span>` +
+            `  <span>窗口内活跃日均：<strong class="ag-ta-mono" style="color:var(--ag-ta-fg);">${avgStr}</strong></span>` +
+            `</div>` +
+            `<span>${
+              uiState.selectedDate
+                ? `已锁定单日：${esc(uiState.selectedDate)}（再次点击取消）`
+                : '展示近 26 周（高亮当前时间窗）'
+            }</span>`;
+        }
+
+        const modelListEl = panel.querySelector('#ag-ta-model-list');
+        if (modelListEl) {
+          if (vm.models.length === 0) {
+            modelListEl.innerHTML = `<div class="ag-ta-empty">当前筛选下无模型记录</div>`;
+          } else {
+            const modelSum = Math.max(1, vm.models.reduce((acc, m) => acc + taGetMetricVal(m, uiState.metric), 0));
+            const modelMax = Math.max(1, ...vm.models.map((m) => taGetMetricVal(m, uiState.metric)));
+            modelListEl.innerHTML = vm.models
+              .map((m) => {
+                const val = taGetMetricVal(m, uiState.metric);
+                const share = (val / modelSum) * 100;
+                const barW = Math.max(4, (val / modelMax) * 100);
+                const tot = Math.max(1, m.total);
+                const inW = (m.inTok / tot) * 100;
+                const cacheW = (m.cacheRead / tot) * 100;
+                const thinkW = (m.thinkTok / tot) * 100;
+                const respW = Math.max(0, 100 - inW - cacheW - thinkW);
+                const rateStr = m.cacheRate !== null ? `${Math.round(m.cacheRate * 100)}%` : '--';
+                const isSel = uiState.selectedModel === m.key;
+                return (
+                  `<div class="ag-ta-row-btn ${isSel ? 'active' : ''}" data-model-key="${esc(m.key)}">` +
+                  `  <div class="ag-ta-row-top">` +
+                  `    <div class="ag-ta-row-name">` +
+                  `      <span title="${esc(m.key)}">${esc(m.key)}</span>` +
+                  (uiState.modelGroup === 'model' ? `<span class="ag-ta-badge">${esc(m.pool)}</span>` : '') +
+                  `    </div>` +
+                  `    <div class="ag-ta-row-nums ag-ta-mono">` +
+                  `      <span style="color:var(--ag-ta-muted);">${m.calls}次 · ${rateStr}</span>` +
+                  `      <span style="font-weight:600;">${esc(taFormatMetricVal(m, uiState.metric))}</span>` +
+                  `      <span style="color:var(--ag-ta-muted);width:38px;text-align:right;">${share.toFixed(1)}%</span>` +
+                  `    </div>` +
+                  `  </div>` +
+                  `  <div class="ag-ta-track">` +
+                  `    <div class="ag-ta-track-inner" style="width:${barW}%;">` +
+                  `      <div class="ag-ta-seg-in" style="width:${inW}%;"></div>` +
+                  `      <div class="ag-ta-seg-cache" style="width:${cacheW}%;"></div>` +
+                  `      <div class="ag-ta-seg-think" style="width:${thinkW}%;"></div>` +
+                  `      <div class="ag-ta-seg-out" style="width:${respW}%;"></div>` +
+                  `    </div>` +
+                  `  </div>` +
+                  `</div>`
+                );
+              })
+              .join('');
+            modelListEl.querySelectorAll('[data-model-key]').forEach((row) => {
+              row.addEventListener('click', () => {
+                const k = row.getAttribute('data-model-key');
+                uiState.selectedModel = uiState.selectedModel === k ? null : k;
+                renderPanel();
+              });
+            });
+          }
+        }
+
+        const scenListEl = panel.querySelector('#ag-ta-scenario-list');
+        if (scenListEl) {
+          if (vm.scenarios.length === 0) {
+            scenListEl.innerHTML = `<div class="ag-ta-empty">当前筛选下无场景记录</div>`;
+          } else {
+            const scenSum = Math.max(1, vm.scenarios.reduce((acc, s) => acc + taGetMetricVal(s, uiState.metric), 0));
+            const scenMax = Math.max(1, ...vm.scenarios.map((s) => taGetMetricVal(s, uiState.metric)));
+            scenListEl.innerHTML = vm.scenarios
+              .map((s) => {
+                const meta = TA_SCENARIO_META[s.key] || { label: s.key, desc: '', color: 'var(--ag-ta-c6)' };
+                const val = taGetMetricVal(s, uiState.metric);
+                const share = (val / scenSum) * 100;
+                const barW = Math.max(4, (val / scenMax) * 100);
+                const isSel = uiState.selectedScenario === s.key;
+                const extra = s.subAgents.length > 0 ? ` (${s.subAgents.join(', ')})` : '';
+                return (
+                  `<div class="ag-ta-row-btn ${isSel ? 'active' : ''}" data-scen-key="${esc(s.key)}">` +
+                  `  <div class="ag-ta-row-top">` +
+                  `    <div class="ag-ta-row-name">` +
+                  `      <span class="ag-ta-swatch" style="background-color:${meta.color};"></span>` +
+                  `      <span class="ag-ta-row-label" title="${esc(meta.label + extra)}">${esc(meta.label + extra)}</span>` +
+                  `    </div>` +
+                  `    <div class="ag-ta-row-nums ag-ta-mono">` +
+                  `      <span style="color:var(--ag-ta-muted);">${s.calls}次</span>` +
+                  `      <span style="font-weight:600;">${esc(taFormatMetricVal(s, uiState.metric))}</span>` +
+                  `      <span style="color:var(--ag-ta-muted);width:38px;text-align:right;">${share.toFixed(1)}%</span>` +
+                  `    </div>` +
+                  `  </div>` +
+                  `  <div class="ag-ta-track"><div class="ag-ta-track-inner" style="width:${barW}%;background-color:${meta.color};"></div></div>` +
+                  `  <div style="margin-top:3px;font-size:11px;color:var(--ag-ta-muted);">${esc(meta.desc)}</div>` +
+                  `</div>`
+                );
+              })
+              .join('');
+            scenListEl.querySelectorAll('[data-scen-key]').forEach((row) => {
+              row.addEventListener('click', () => {
+                const k = row.getAttribute('data-scen-key');
+                uiState.selectedScenario = uiState.selectedScenario === k ? null : k;
+                renderPanel();
+              });
+            });
+          }
+        }
+
+        renderExplorerSections(panel, vm);
+      }
+
+      function setTokenTabActive(modal, active) {
+        if (!modal) return;
+        tabActive = Boolean(active);
+        if (tabActive) {
+          modal.setAttribute('data-ag-token-tab-active', '1');
+        } else {
+          modal.removeAttribute('data-ag-token-tab-active');
+          hideHmTooltip();
+        }
+        const navBtn = document.getElementById(NAV_BTN_ID);
+        if (navBtn) navBtn.setAttribute('data-active', tabActive ? '1' : '0');
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) {
+          panel.hidden = !tabActive;
+          if (tabActive) {
+            renderPanel();
+            void fetchTokenAnalytics(false);
+          }
+        }
+      }
+
+      function syncSettingsModal() {
+        if (disposed || !document.body) return;
+        const modal = findActiveSettingsModal();
+        if (!modal) {
+          if (hmTooltipVisible) hideHmTooltip();
+          if (dataState.fetchedAt > 0) dataState.modalClosedSinceFetch = true;
+          if (tabActive) {
+            tabActive = false;
+          }
+          return;
+        }
+
+        observeModalStateAttrs(modal);
+        const navTarget = findNavMountTarget(modal);
+        const contentTarget = findRightContentMountTarget(modal, navTarget?.sidebar);
+        if (!navTarget || !contentTarget) return;
+
+        const { sidebar, container: navContainer } = navTarget;
+        const { nativeScroll, hostParent } = contentTarget;
+
+        if (nativeScroll.getAttribute('data-ag-native-settings-scroll') !== '1') {
+          nativeScroll.setAttribute('data-ag-native-settings-scroll', '1');
+        }
+
+        let navSection = document.getElementById(NAV_SECTION_ID);
+        if (!navSection) {
+          const uiStr = getSelfUiStrings();
+          navSection = document.createElement('div');
+          navSection.id = NAV_SECTION_ID;
+          navSection.setAttribute('data-ag-token-ui', '1');
+          navSection.innerHTML =
+            `<div class="ag-ta-nav-divider"></div>` +
+            `<div class="ag-ta-nav-heading" data-ag-ta-nav-heading="1">${uiStr.extHeading}</div>` +
+            `<div class="relative mx-2">` +
+            `  <button type="button" id="${NAV_BTN_ID}" data-ag-token-tab="1" data-active="0">` +
+            `    <svg class="ag-ta-nav-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">` +
+            `      <path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/>` +
+            `      <rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/>` +
+            `    </svg>` +
+            `    <span data-ag-ta-nav-btn-label="1">${uiStr.tokenTab}</span>` +
+            `  </button>` +
+            `</div>`;
+          navSection.querySelector(`#${NAV_BTN_ID}`)?.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (tabActive && modal.getAttribute('data-ag-token-tab-active') === '1') return;
+            setTokenTabActive(modal, true);
+          });
+        } else {
+          const uiStr = getSelfUiStrings();
+          const hEl = navSection.querySelector('[data-ag-ta-nav-heading="1"], .ag-ta-nav-heading');
+          const bEl = navSection.querySelector('[data-ag-ta-nav-btn-label="1"], #ag-token-nav-btn span');
+          if (hEl && hEl.textContent !== uiStr.extHeading) hEl.textContent = uiStr.extHeading;
+          if (bEl && bEl.textContent !== uiStr.tokenTab) bEl.textContent = uiStr.tokenTab;
+        }
+        // 第一阶段双语切换仅同步设置侧栏分类标题与入口按钮名；Token 统计面板内部报表文案留待第二阶段多语言解耦统一抽离
+        window.__ag_rerender_token_analytics_lang = () => {
+          const sec = document.getElementById(NAV_SECTION_ID);
+          if (!sec) return;
+          const uiStr = getSelfUiStrings();
+          const hEl = sec.querySelector('[data-ag-ta-nav-heading="1"], .ag-ta-nav-heading');
+          const bEl = sec.querySelector('[data-ag-ta-nav-btn-label="1"], #ag-token-nav-btn span');
+          if (hEl && hEl.textContent !== uiStr.extHeading) hEl.textContent = uiStr.extHeading;
+          if (bEl && bEl.textContent !== uiStr.tokenTab) bEl.textContent = uiStr.tokenTab;
+        };
+        if (navSection.parentElement !== navContainer) {
+          navContainer.appendChild(navSection);
+        }
+
+        let panel = document.getElementById(PANEL_ID);
+        if (!panel) {
+          panel = document.createElement('div');
+          panel.id = PANEL_ID;
+          panel.setAttribute('data-ag-token-ui', '1');
+          panel.hidden = true;
+        }
+        if (panel.parentElement !== hostParent) {
+          hostParent.appendChild(panel);
+        }
+
+        if (!modal.__ag_token_click_bound) {
+          modal.__ag_token_click_bound = true;
+          modal.addEventListener(
+            'click',
+            (e) => {
+              const t = e.target;
+              if (!(t instanceof Element) || t.closest('[data-ag-token-ui]')) return;
+              const clickedNav =
+                t.closest('[data-testid^="settings-nav-item-"]') ||
+                (sidebar && sidebar.contains(t) && t.closest('.group\\/nav-item, button'));
+              if (
+                clickedNav &&
+                !t.closest(
+                  '[data-testid="settings-app-version-copy"], [data-testid="settings-app-version-caption"], [data-testid="settings-upload-debug-bundle-button"]'
+                )
+              ) {
+                if (modal.getAttribute('data-ag-token-tab-active') === '1') {
+                  setTokenTabActive(modal, false);
+                }
+              }
+            },
+            true
+          );
+        }
+
+        if (pendingOpenTokenTab) {
+          pendingOpenTokenTab = false;
+          if (pendingOpenTimer) {
+            clearTimeout(pendingOpenTimer);
+            pendingOpenTimer = null;
+          }
+          setTokenTabActive(modal, true);
+        } else {
+          const btn = document.getElementById(NAV_BTN_ID);
+          if (btn) btn.setAttribute('data-active', tabActive ? '1' : '0');
+          panel.hidden = !tabActive;
+          if (tabActive) modal.setAttribute('data-ag-token-tab-active', '1');
+          else modal.removeAttribute('data-ag-token-tab-active');
+        }
+      }
+
+      window.__ag_open_token_analytics_tab = () => {
+        const modal = findActiveSettingsModal();
+        if (modal) {
+          syncSettingsModal();
+          setTokenTabActive(modal, true);
+          return;
+        }
+        pendingOpenTokenTab = true;
+        if (pendingOpenTimer) clearTimeout(pendingOpenTimer);
+        pendingOpenTimer = setTimeout(() => {
+          pendingOpenTokenTab = false;
+          pendingOpenTimer = null;
+        }, 3500);
+        const settingsBtn = document.querySelector('[data-testid="settings-button"]');
+        if (settingsBtn) settingsBtn.click();
+      };
+
+      const OWN_TOKEN_SEL = '[data-ag-token-ui], [data-ag-metrics-pill], #ag-live-metrics-pill, #ag-live-metrics-tooltip';
+      function isOwnTokenNode(n) {
+        return (
+          n instanceof Element &&
+          (n.id?.startsWith('ag-') || Boolean(n.closest?.(OWN_TOKEN_SEL)))
+        );
+      }
+      function isOwnTokenMutation(m) {
+        if (m.target instanceof Element && m.target.closest?.(OWN_TOKEN_SEL)) {
+          return true;
+        }
+        if (m.type === 'childList') {
+          const addedLen = m.addedNodes.length;
+          const removedLen = m.removedNodes.length;
+          if (addedLen + removedLen > 0) {
+            for (let i = 0; i < addedLen; i++) {
+              if (!isOwnTokenNode(m.addedNodes[i])) return false;
+            }
+            for (let i = 0; i < removedLen; i++) {
+              if (!isOwnTokenNode(m.removedNodes[i])) return false;
+            }
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function scheduleModalSync() {
+        if (disposed || syncRaf) return;
+        syncRaf = requestAnimationFrame(() => {
+          syncRaf = null;
+          syncSettingsModal();
+        });
+      }
+
+      const MODAL_FAST_SKIP_SEL =
+        '[data-markdown-root], [data-testid="conversation-view"], [id="antigravity.agentSidePanelInputBox"], .monaco-editor, .monaco-diff-editor, .xterm, [data-ag-token-ui], [data-ag-metrics-pill], #ag-live-metrics-pill, #ag-live-metrics-tooltip';
+      const MODAL_RELEVANT_SEL =
+        '.settings-modal-container, .settings-modal-backdrop, [data-testid="settings-sidebar"], [role="dialog"]';
+      const observedModalEls = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+      const backdropObs =
+        typeof MutationObserver !== 'undefined'
+          ? new MutationObserver(() => {
+              scheduleModalSync();
+            })
+          : null;
+
+      function observeModalStateAttrs(modal) {
+        if (!backdropObs || !observedModalEls || !modal) return;
+        if (!observedModalEls.has(modal)) {
+          observedModalEls.add(modal);
+          backdropObs.observe(modal, { attributes: true, attributeFilter: ['aria-hidden', 'class'] });
+        }
+        const backdrop = modal.closest?.('.settings-modal-backdrop');
+        if (backdrop && !observedModalEls.has(backdrop)) {
+          observedModalEls.add(backdrop);
+          backdropObs.observe(backdrop, { attributes: true, attributeFilter: ['aria-hidden', 'class'] });
+        }
+      }
+
+      function nodeTouchesSettingsModal(n) {
+        if (!(n instanceof Element)) return false;
+        if (n.matches?.(MODAL_RELEVANT_SEL)) return true;
+        return Boolean(n.firstElementChild && n.querySelector?.(MODAL_RELEVANT_SEL));
+      }
+
+      function isSettingsModalRelevantMutation(m) {
+        const t = m.target;
+        if (t instanceof Element && t.closest?.(MODAL_FAST_SKIP_SEL)) return false;
+        if (isOwnTokenMutation(m)) return false;
+        if (pendingOpenTokenTab || (tabActive && !document.getElementById(PANEL_ID)?.isConnected)) return true;
+        if (t instanceof Element && t.closest?.(MODAL_RELEVANT_SEL)) return true;
+        if (m.type === 'childList') {
+          for (let i = 0; i < m.addedNodes.length; i++) {
+            if (nodeTouchesSettingsModal(m.addedNodes[i])) return true;
+          }
+          for (let i = 0; i < m.removedNodes.length; i++) {
+            if (nodeTouchesSettingsModal(m.removedNodes[i])) return true;
+          }
+        }
+        return false;
+      }
+
+      let modalObserverStarted = false;
+      const modalObs =
+        typeof MutationObserver !== 'undefined'
+          ? new MutationObserver((mutations) => {
+              for (let i = 0; i < mutations.length; i++) {
+                if (isSettingsModalRelevantMutation(mutations[i])) {
+                  scheduleModalSync();
+                  break;
+                }
+              }
+            })
+          : null;
+
+      function ensureObserverStarted() {
+        if (disposed || modalObserverStarted || !modalObs || !document.body) return;
+        modalObserverStarted = true;
+        modalObs.observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      }
+
+      window.__ag_sync_token_analytics_fn = () => {
+        if (disposed) return;
+        ensureObserverStarted();
+        syncSettingsModal();
+      };
+
+      ensureObserverStarted();
+      syncSettingsModal();
+
+      window.__ag_cleanup_fns.push(() => {
+        disposed = true;
+        unbindHmGlobalListeners();
+        hmDayByDate.clear();
+        activeHmCell = null;
+        hmTooltipVisible = false;
+        cachedBaseVm = { key: '', payloadRef: null, vm: null };
+        if (modalObs) modalObs.disconnect();
+        if (backdropObs) backdropObs.disconnect();
+        if (syncRaf) cancelAnimationFrame(syncRaf);
+        if (pendingOpenTimer) clearTimeout(pendingOpenTimer);
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+        for (const entry of pendingRequests.values()) {
+          clearTimeout(entry.timer);
+        }
+        pendingRequests.clear();
+        cleanupTokenAnalyticsDom();
+      });
+    })();
+  } else {
+    cleanupTokenAnalyticsDom();
+  }
+  /* __AG_TOKEN_ANALYTICS_JS_END__ */
 
   // ============================================================================
   // 5. 开放用户自定义前端脚本钩子 (user/custom.js，沙箱异常隔离，同时提供 ctx 与 boot)

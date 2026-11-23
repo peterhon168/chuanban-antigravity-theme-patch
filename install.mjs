@@ -3,13 +3,15 @@
  * chuanban-antigravity-theme-patch · 一键安装、自检、CDP 接力重启、安全模式验证、打包与回滚 CLI (install.mjs)
  *
  * 支持子命令：
- *   node install.mjs install  [--channel auto|stable|insiders] [--preset high-contrast|claude-desktop-purewhite|vintage-deep] [--dark-preset onyx|claude-warm] [--sync-user] [--with-launcher] [--target-dir <dir>]
- *   node install.mjs relaunch [--channel auto|stable|insiders] [--force] [--target-dir <dir>]
- *   node install.mjs install-fonts --from <font-folder-path>
- *   node install.mjs doctor   [--channel auto|stable|insiders] [--target-dir <dir>]
- *   node install.mjs verify   [--safe-mode] [--channel auto|stable|insiders] [--target-dir <dir>]
- *   node install.mjs rollback [--target-dir <dir>]
- *   node install.mjs uninstall [--target-dir <dir>]
+ *   node install.mjs install        [--channel auto|stable|insiders] [--preset native|morandi|absolutely|claude-desktop-purewhite|vintage-deep] [--dark-preset onyx|claude-warm] [--sync-user] [--with-launcher] [--target-dir <dir>]
+ *   node install.mjs relaunch       [--channel auto|stable|insiders] [--force] [--target-dir <dir>]
+ *   node install.mjs download-fonts [--dir <download-dir>] [--all] [--force] [--super-ttc]
+ *   node install.mjs install-fonts  --auto-download [--dir <download-dir>] [--force] [--super-ttc] [--retire-super-ttc]
+ *   node install.mjs install-fonts  --from <font-folder-or-zip-path> [--retire-super-ttc]
+ *   node install.mjs doctor         [--channel auto|stable|insiders] [--target-dir <dir>]
+ *   node install.mjs verify         [--safe-mode] [--channel auto|stable|insiders] [--target-dir <dir>]
+ *   node install.mjs rollback       [--target-dir <dir>]
+ *   node install.mjs uninstall      [--target-dir <dir>]
  *   node install.mjs build-manifest
  *   node install.mjs pack
  */
@@ -19,6 +21,8 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { execSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -34,8 +38,68 @@ process.emitWarning = function (warning, ...rest) {
 };
 
 const GOOGLE_DRIVE_URL = 'https://drive.google.com/drive/folders/1NX92SgVUqtSjWg6bt6sIJXy-cn7J_boC';
+const WINDOWS_SARASA_SPLIT_VIEW_URL = 'https://drive.google.com/file/d/1iVVvZXtwUcDiHy42tJ25X6N-JlOf3l7A/view?usp=sharing';
+const SARASA_GITHUB_RELEASES_URL = 'https://github.com/be5invis/Sarasa-Gothic/releases';
 const NOTION_GUIDE_URL = 'https://chuanban.notion.site/chuanban-antigravity-theme-patch-db7c5846f37546be9481cd791aed0554';
 const GITHUB_REPO_URL = 'https://github.com/Anarcadia/chuanban-antigravity-theme-patch';
+
+function buildGoogleDriveDirectUrl(fileId) {
+  return `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`;
+}
+
+const FONT_DOWNLOAD_CATALOG = {
+  anthropicSerifRegular: {
+    id: 'anthropicSerifRegular',
+    label: 'Anthropic Serif Regular',
+    filename: 'AnthropicSerif-Regular.ttf',
+    driveFileId: '1RZ1rMYYFlr5B-slSSZV-DCJtv5AfTMUV',
+    url: buildGoogleDriveDirectUrl('1RZ1rMYYFlr5B-slSSZV-DCJtv5AfTMUV'),
+    kind: 'font',
+    minBytes: 100 * 1024,
+    timeoutSec: 120
+  },
+  anthropicSerifBold: {
+    id: 'anthropicSerifBold',
+    label: 'Anthropic Serif Bold',
+    filename: 'AnthropicSerif-Bold.ttf',
+    driveFileId: '1-LJfTa1wasIqkoCCHI4mfVyh8tzreiAO',
+    url: buildGoogleDriveDirectUrl('1-LJfTa1wasIqkoCCHI4mfVyh8tzreiAO'),
+    kind: 'font',
+    minBytes: 100 * 1024,
+    timeoutSec: 120
+  },
+  anthropicMonoRegular: {
+    id: 'anthropicMonoRegular',
+    label: 'Anthropic Mono Regular',
+    filename: 'AnthropicMono-Regular.ttf',
+    driveFileId: '1NK_1Q2MBl5yHw94pC_kbzybDgqEFCZVk',
+    url: buildGoogleDriveDirectUrl('1NK_1Q2MBl5yHw94pC_kbzybDgqEFCZVk'),
+    kind: 'font',
+    minBytes: 50 * 1024,
+    timeoutSec: 120
+  },
+  sarasaSplitScZip: {
+    id: 'sarasaSplitScZip',
+    label: 'Sarasa Gothic SC Split TTF (14 weights, 170 MB ZIP)',
+    filename: 'Windows-Sarasa-Split-SC-TTF-v1.0.43.zip',
+    driveFileId: '1iVVvZXtwUcDiHy42tJ25X6N-JlOf3l7A',
+    url: buildGoogleDriveDirectUrl('1iVVvZXtwUcDiHy42tJ25X6N-JlOf3l7A'),
+    viewUrl: WINDOWS_SARASA_SPLIT_VIEW_URL,
+    kind: 'zip',
+    minBytes: 50 * 1024 * 1024,
+    timeoutSec: 600
+  },
+  sarasaSuperTtc: {
+    id: 'sarasaSuperTtc',
+    label: 'Sarasa Gothic SuperTTC (791 MB TTC, macOS/Linux optional)',
+    filename: 'Sarasa-SuperTTC.ttc',
+    driveFileId: '1i7mqpF2UpjCSR9oBPvPAD3CB6TJn9mwu',
+    url: buildGoogleDriveDirectUrl('1i7mqpF2UpjCSR9oBPvPAD3CB6TJn9mwu'),
+    kind: 'font',
+    minBytes: 200 * 1024 * 1024,
+    timeoutSec: 1200
+  }
+};
 
 const ALLOWED_ORIGINS = [
   'http://127.0.0.1',
@@ -117,7 +181,7 @@ function buildManifest(baseDir = __dirname) {
   }
   const manifest = {
     name: 'chuanban-antigravity-theme-patch',
-    version: '5.5.0',
+    version: '6.0.2',
     minNodeVersion: '22.0.0',
     fullMetricsNodeVersion: '22.13.0',
     distribution: {
@@ -141,6 +205,7 @@ function buildDistZip(baseDir = __dirname) {
   if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
   const includeItems = [
+    'LICENSE',
     'SKILL.md',
     'README.md',
     'CHANGELOG.md',
@@ -393,7 +458,9 @@ function readHostVersionAndProcesses(channel = 'auto') {
       `$allowInsiders = $${allowInsiders ? 'true' : 'false'}`,
       `$ver = $null`,
       existingExe ? `$ver = (Get-Item -LiteralPath '${existingExe.replace(/'/g, "''")}').VersionInfo.ProductVersion` : '',
-      `$procs = @(Get-CimInstance Win32_Process -Filter "Name = 'Antigravity.exe' OR Name = 'Antigravity - Insiders.exe'" | Where-Object { $_.CommandLine -notmatch '--type=|--crashpad|--utility-sub-type=|--import=|sidecar_sdk|--ms-enable-electron-run-as-node' } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; exe = [string]$_.ExecutablePath; cmd = [string]$_.CommandLine } })`,
+      `$procs = @()`,
+      `try { $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'Antigravity.exe' OR Name = 'Antigravity - Insiders.exe'" -ErrorAction Stop | Where-Object { $_.CommandLine -notmatch '--type=|--crashpad|--utility-sub-type=|--import=|sidecar_sdk|--ms-enable-electron-run-as-node' } | ForEach-Object { @{ pid = [int]$_.ProcessId; name = [string]$_.Name; exe = [string]$_.ExecutablePath; cmd = [string]$_.CommandLine } }) } catch {}`,
+      `if ($procs.Count -eq 0) { $byName = Get-Process -Name 'Antigravity','Antigravity - Insiders' -ErrorAction SilentlyContinue | Group-Object ProcessName; $procs = @(foreach ($g in $byName) { $p = ($g.Group | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1); if ($null -eq $p) { $p = $g.Group | Select-Object -First 1 }; if ($null -ne $p) { $exePath = ''; try { $exePath = [string]$p.Path } catch {}; @{ pid = [int]$p.Id; name = ([string]$p.ProcessName + '.exe'); exe = $exePath; cmd = '' } } }) }`,
       `$lnkOk = $false`,
       `$wsh = New-Object -ComObject WScript.Shell`,
       `$lnkDirs = if ($env:AG_WIN32_LNK_DIRS) { $env:AG_WIN32_LNK_DIRS -split ';' } else { @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'), (Join-Path $env:APPDATA 'Microsoft\\Windows\\Start Menu\\Programs'), (Join-Path $env:ProgramData 'Microsoft\\Windows\\Start Menu\\Programs'), (Join-Path $env:APPDATA 'Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar')) }`,
@@ -506,30 +573,111 @@ async function detectEnvironment(channel = 'auto') {
   }
 
   const home = os.homedir();
+  const winUserFontsDir =
+    process.platform === 'win32'
+      ? path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Microsoft', 'Windows', 'Fonts')
+      : null;
+  const winSystemFontsDir =
+    process.platform === 'win32' ? path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts') : null;
   const fontDirs =
     process.platform === 'darwin'
       ? [path.join(home, 'Library/Fonts'), '/Library/Fonts']
       : process.platform === 'win32'
-      ? [
-          path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'Microsoft/Windows/Fonts'),
-          'C:\\Windows\\Fonts'
-        ]
+      ? [winUserFontsDir, winSystemFontsDir]
       : [path.join(home, '.local/share/fonts'), '/usr/local/share/fonts', '/usr/share/fonts'];
 
   let allFontFiles = [];
+  let userFontFiles = [];
+  let systemFontFiles = [];
   for (const d of fontDirs) {
     try {
-      if (fs.existsSync(d)) {
-        allFontFiles.push(...fs.readdirSync(d));
+      if (d && fs.existsSync(d)) {
+        const list = fs.readdirSync(d);
+        allFontFiles.push(...list);
+        if (process.platform === 'win32') {
+          if (winUserFontsDir && isSameTargetPath(d, winUserFontsDir)) {
+            userFontFiles = list;
+          } else if (winSystemFontsDir && isSameTargetPath(d, winSystemFontsDir)) {
+            systemFontFiles = list;
+          }
+        }
       }
     } catch {}
   }
 
-  // v5.5.0 UI 西文直连官方 Google Sans Flex 引擎，本地仅需 Anthropic Serif（对话正文）+ Anthropic Mono（代码）+ Sarasa（中文）
-  const hasAnthropicSerifFont = allFontFiles.some((f) => /AnthropicSerif|Anthropic[ _-]Serif/i.test(f));
-  const hasAnthropicMonoFont = allFontFiles.some((f) => /AnthropicMono|Anthropic[ _-]Mono/i.test(f));
+  let winHkcuFontEntries = null;
+  if (process.platform === 'win32') {
+    winHkcuFontEntries = readWinHkcuFontRegistryEntries();
+  }
+
+  const registeredWinUserBasenames = new Set();
+  if (Array.isArray(winHkcuFontEntries)) {
+    for (const e of winHkcuFontEntries) {
+      const rawData = String(e?.data || '').trim();
+      if (!rawData) continue;
+      const base = path.win32.basename(rawData).toLowerCase();
+      if (base) registeredWinUserBasenames.add(base);
+    }
+  }
+
+  // Windows 下 Chromium local() 只能识别已写入注册表（HKCU\...\Fonts）或系统目录（C:\Windows\Fonts）的字体；
+  // 仅手动复制到 AppData\Local\Microsoft\Windows\Fonts 但未写注册表的文件不算“有效已装”
+  const effectiveFontFiles =
+    process.platform === 'win32' && Array.isArray(winHkcuFontEntries)
+      ? [
+          ...systemFontFiles,
+          ...userFontFiles.filter((f) => registeredWinUserBasenames.has(f.toLowerCase()))
+        ]
+      : allFontFiles;
+
+  // v5.5.0+ UI 西文直连官方 Google Sans Flex 引擎，本地仅需 Anthropic Serif（对话正文）+ Anthropic Mono（代码）+ Sarasa（中文）
+  const hasAnthropicSerifFont = effectiveFontFiles.some((f) => /AnthropicSerif|Anthropic[ _-]Serif/i.test(f));
+  const hasAnthropicSerifRegular = effectiveFontFiles.some((f) =>
+    /AnthropicSerif.*(Regular|Text)|Anthropic[ _-]Serif.*(Regular|Text)/i.test(f)
+  );
+  const hasAnthropicSerifBold = effectiveFontFiles.some((f) =>
+    /AnthropicSerif.*(Bold|SemiBold)|Anthropic[ _-]Serif.*(Bold|SemiBold)/i.test(f)
+  );
+  const hasAnthropicMonoFont = effectiveFontFiles.some((f) => /AnthropicMono|Anthropic[ _-]Mono/i.test(f));
   const hasAnthropicFont = hasAnthropicSerifFont && hasAnthropicMonoFont;
-  const hasSarasaFont = allFontFiles.some((f) => /Sarasa|更纱/i.test(f));
+  const hasSarasaUiScSplit = effectiveFontFiles.some((f) => /^Sarasa[-_ ]?Ui[-_ ]?SC[-_ ].*\.ttf$/i.test(f));
+  const hasSarasaMonoSlabScSplit = effectiveFontFiles.some((f) => /^Sarasa[-_ ]?Mono[-_ ]?Slab[-_ ]?SC[-_ ].*\.ttf$/i.test(f));
+  const hasSarasaSplitScTtf = hasSarasaUiScSplit && hasSarasaMonoSlabScSplit;
+
+  const systemWinFontBasenames = new Set(systemFontFiles.map((f) => f.toLowerCase()));
+  const targetFontFilePattern = /AnthropicSerif|Anthropic[ _-]Serif|AnthropicMono|Anthropic[ _-]Mono|Sarasa|更纱|更紗/i;
+  const unregisteredWinFonts =
+    process.platform === 'win32' && Array.isArray(winHkcuFontEntries)
+      ? userFontFiles.filter(
+          (f) =>
+            /\.(ttf|otf|ttc)$/i.test(f) &&
+            targetFontFilePattern.test(f) &&
+            !(hasSarasaSplitScTtf && /Sarasa.*\.ttc$/i.test(f)) &&
+            !registeredWinUserBasenames.has(f.toLowerCase()) &&
+            !systemWinFontBasenames.has(f.toLowerCase())
+        )
+      : [];
+  const diskHasSuperTtc = allFontFiles.some((f) => /Sarasa[ _-]?SuperTTC[^\\\/]*\.ttc$/i.test(f));
+  const sysHasSuperTtc = systemFontFiles.some((f) => /Sarasa[ _-]?SuperTTC[^\\\/]*\.ttc$/i.test(f));
+  const hkcuHasSuperTtc =
+    winHkcuFontEntries !== null
+      ? winHkcuFontEntries.some(
+          (e) => /Sarasa[ _-]?SuperTTC/i.test(e.name) || /Sarasa[ _-]?SuperTTC[^\\\/]*\.ttc$/i.test(e.data)
+        )
+      : diskHasSuperTtc;
+  const hasSarasaSuperTtc =
+    process.platform === 'win32' ? Boolean(sysHasSuperTtc || hkcuHasSuperTtc) : diskHasSuperTtc;
+  const orphanSuperTtcPendingReboot = Boolean(process.platform === 'win32' && diskHasSuperTtc && !hasSarasaSuperTtc);
+  const hasSarasaFont =
+    process.platform === 'win32'
+      ? Boolean(
+          hasSarasaSplitScTtf ||
+            hasSarasaSuperTtc ||
+            systemFontFiles.some((f) => /Sarasa|更纱|更紗/i.test(f)) ||
+            (winHkcuFontEntries !== null &&
+              winHkcuFontEntries.some((e) => /Sarasa|更纱|更紗/i.test(e.name) || /Sarasa|更纱|更紗/i.test(e.data)))
+        )
+      : effectiveFontFiles.some((f) => /Sarasa|更纱|更紗/i.test(f));
 
   const checkSingleChannel = (ch) => {
     const isInsiders = ch === 'insiders';
@@ -607,8 +755,15 @@ async function detectEnvironment(channel = 'auto') {
       : 'UNSUPPORTED (< 22.0, requires Node 22+)',
     hasAnthropicFont,
     hasAnthropicSerifFont,
+    hasAnthropicSerifRegular,
+    hasAnthropicSerifBold,
     hasAnthropicMonoFont,
     hasSarasaFont,
+    hasSarasaSplitScTtf,
+    hasSarasaSuperTtc,
+    orphanSuperTtcPendingReboot,
+    unregisteredWinFonts,
+    winUserFontsDir,
     channel,
     appExists: chInfo.appExists || insidersInfo.appExists || hostRuntime.runningProcesses.length > 0,
     appVersion: hostRuntime.appVersion,
@@ -880,6 +1035,7 @@ async function inspectLiveWindow(portFileOrEnv, fallbackPort = 9222) {
                   hasUserStyle: !!document.getElementById('antigravity-user-custom-style'),
                   preset: document.documentElement ? document.documentElement.getAttribute('data-ag-preset') : null,
                   darkPreset: document.documentElement ? document.documentElement.getAttribute('data-ag-dark-preset') : null,
+                  uiLang: document.documentElement ? document.documentElement.getAttribute('data-ag-lang') : null,
                   themeMode: document.documentElement ? document.documentElement.getAttribute('data-ag-theme-mode') : null,
                   pageType: document.documentElement ? document.documentElement.getAttribute('data-ag-page-type') : null,
                   waxSeal: document.documentElement ? document.documentElement.getAttribute('data-ag-wax-seal') : null,
@@ -1038,9 +1194,9 @@ function ensureCdpLaunchers(channel = 'auto', options = {}) {
           '  <key>CFBundlePackageType</key>',
           '  <string>APPL</string>',
           '  <key>CFBundleShortVersionString</key>',
-          '  <string>5.5.0</string>',
+          '  <string>6.0.2</string>',
           '  <key>CFBundleVersion</key>',
-          '  <string>550</string>',
+          '  <string>601</string>',
           ...(iconBase ? ['  <key>CFBundleIconFile</key>', `  <string>${iconBase}</string>`] : []),
           '  <key>LSMinimumSystemVersion</key>',
           '  <string>12.0</string>',
@@ -1241,12 +1397,173 @@ function removeCdpLaunchers() {
   }
 }
 
+function inspectWindowsTaskXmlTriggers(rawXml) {
+  const xml = String(rawXml || '').replace(/\0/g, '');
+  const settingsBlock = xml.match(/<Settings\b[^>]*>[\s\S]*?<\/Settings>/i)?.[0] || '';
+  const taskEnabled = !/<Enabled>\s*false\s*<\/Enabled>/i.test(settingsBlock);
+  const isTriggerEnabled = (block) => !/<Enabled>\s*false\s*<\/Enabled>/i.test(block);
+  const hasIntervalRepetition = (block) =>
+    /<Repetition\b[^>]*>[\s\S]*?<Interval>\s*[^<\s]+\s*<\/Interval>[\s\S]*?<\/Repetition>/i.test(block);
+  const timedBlocks = xml.match(/<(?:TimeTrigger|CalendarTrigger)\b[^>]*>[\s\S]*?<\/(?:TimeTrigger|CalendarTrigger)>/gi) || [];
+  const hasTimedRepetition = timedBlocks.some((block) => isTriggerEnabled(block) && hasIntervalRepetition(block));
+  const logonBlocks = xml.match(/<LogonTrigger\b[^>]*>[\s\S]*?<\/LogonTrigger>/gi) || [];
+  const logonHasRepetition = logonBlocks.some((block) => isTriggerEnabled(block) && hasIntervalRepetition(block));
+  const legacyLogonOnlyRepetition = logonHasRepetition && !hasTimedRepetition;
+  return { taskEnabled, hasTimedRepetition, legacyLogonOnlyRepetition };
+}
+
+function inspectWindowsKeepAliveTask(targetDir) {
+  if (process.platform !== 'win32') return null;
+  try {
+    const ps = [
+      "try {",
+      "  $i = Get-ScheduledTaskInfo -TaskName 'AntigravityThemeDaemon' -ErrorAction Stop;",
+      "  [pscustomobject]@{",
+      "    registered=$true;",
+      "    nextRunTime=$(if($i.NextRunTime){$i.NextRunTime.ToString('o')}else{$null});",
+      "    lastRunTime=$(if($i.LastRunTime -and $i.LastRunTime.Year -gt 2000){$i.LastRunTime.ToString('o')}else{$null});",
+      "    lastTaskResult=$i.LastTaskResult",
+      "  } | ConvertTo-Json -Compress",
+      "} catch { '{\"registered\":false}' }"
+    ].join(' ');
+    const infoRes = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 8000
+    });
+    if (infoRes.status !== 0) {
+      return {
+        registered: null,
+        error: String(infoRes.stderr || infoRes.stdout || `powershell exit ${infoRes.status}`).trim()
+      };
+    }
+    const info = JSON.parse(String(infoRes.stdout || '').trim());
+    if (!info.registered) {
+      return {
+        registered: false,
+        taskEnabled: false,
+        nextRunTime: null,
+        lastRunTime: null,
+        lastTaskResult: null,
+        hasTimedRepetition: false,
+        legacyLogonOnlyRepetition: false,
+        warning: '未找到 AntigravityThemeDaemon 计划任务，daemon 意外退出后不会被自动拉起'
+      };
+    }
+
+    const queryRes = spawnSync('schtasks', ['/Query', '/TN', 'AntigravityThemeDaemon', '/XML'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 4000
+    });
+    if (queryRes.status !== 0) {
+      return {
+        registered: true,
+        taskEnabled: null,
+        nextRunTime: info.nextRunTime ?? null,
+        lastRunTime: info.lastRunTime ?? null,
+        lastTaskResult: info.lastTaskResult ?? null,
+        hasTimedRepetition: null,
+        legacyLogonOnlyRepetition: null,
+        warning: `无法读取 AntigravityThemeDaemon 计划任务 XML（exit ${queryRes.status}）`
+      };
+    }
+
+    const { taskEnabled, hasTimedRepetition, legacyLogonOnlyRepetition } = inspectWindowsTaskXmlTriggers(queryRes.stdout);
+
+    const installScriptPath = path.join(targetDir || resolveDefaultTargetDir(), 'install.mjs');
+    const warning = !taskEnabled
+      ? `计划任务 AntigravityThemeDaemon 当前处于禁用状态，保活不会触发；请启用该任务或执行 node "${installScriptPath}" install 重新注册`
+      : !hasTimedRepetition
+      ? `5 分钟保活只挂在登录触发器上，安装后到下次登录前不会重复；请执行 node "${installScriptPath}" install 重新注册`
+      : null;
+
+    return {
+      registered: true,
+      taskEnabled,
+      nextRunTime: info.nextRunTime ?? null,
+      lastRunTime: info.lastRunTime ?? null,
+      lastTaskResult: info.lastTaskResult ?? null,
+      hasTimedRepetition,
+      legacyLogonOnlyRepetition,
+      warning
+    };
+  } catch (err) {
+    return {
+      registered: null,
+      error: String(err?.message || err)
+    };
+  }
+}
+
+function buildFontReport(env) {
+  const missingFonts = [];
+  if (!env.hasAnthropicSerifFont) {
+    missingFonts.push('Anthropic Serif (AnthropicSerif-Regular.ttf, AnthropicSerif-Bold.ttf)');
+  }
+  if (!env.hasAnthropicMonoFont) {
+    missingFonts.push('Anthropic Mono (AnthropicMono-Regular.ttf)');
+  }
+  if (!env.hasSarasaFont) {
+    missingFonts.push(
+      process.platform === 'win32'
+        ? 'Sarasa Gothic (Windows 推荐拆分版 Windows-Sarasa-Split-SC-TTF-v1.0.43.zip，避免 791MB SuperTTC 卡顿)'
+        : 'Sarasa Gothic (Sarasa SC Split TTF ZIP 或 Sarasa-SuperTTC.ttc)'
+    );
+  }
+  const allRequiredFontsInstalled = missingFonts.length === 0;
+  const superTtcWarning =
+    process.platform === 'win32' && env.hasSarasaSuperTtc
+      ? `Detected monolithic 791MB Sarasa-SuperTTC.ttc active on Windows; DirectWrite/Chromium may stall 1.5–10.5s on initial weight instantiation and consume >2GB renderer virtual memory. Recommended: run \`node install.mjs install-fonts --auto-download --retire-super-ttc\` (or manually download Windows-Sarasa-Split-SC-TTF-v1.0.43.zip from ${WINDOWS_SARASA_SPLIT_VIEW_URL}).`
+      : null;
+  const unregisteredFiles = Array.isArray(env.unregisteredWinFonts) ? env.unregisteredWinFonts : [];
+  const unregisteredWarning =
+    process.platform === 'win32' && unregisteredFiles.length > 0
+      ? `Found ${unregisteredFiles.length} font file(s) copied into ${env.winUserFontsDir} without HKCU\\...\\Fonts registry entries (${unregisteredFiles.slice(0, 5).join(', ')}${unregisteredFiles.length > 5 ? ', ...' : ''}). Chromium local() cannot load unregistered Windows user fonts. Fix immediately with: node install.mjs install-fonts --from "${env.winUserFontsDir}"`
+      : null;
+
+  const autoDownloadCommand = !allRequiredFontsInstalled
+    ? process.platform === 'win32' && env.hasSarasaSuperTtc
+      ? 'node install.mjs install-fonts --auto-download --retire-super-ttc'
+      : 'node install.mjs install-fonts --auto-download'
+    : null;
+
+  return {
+    uiLatinEngine: 'Google Sans Flex (native variable font)',
+    allRequiredInstalled: allRequiredFontsInstalled,
+    anthropicInstalled: env.hasAnthropicFont,
+    anthropicSerifInstalled: env.hasAnthropicSerifFont,
+    anthropicMonoInstalled: env.hasAnthropicMonoFont,
+    sarasaInstalled: env.hasSarasaFont,
+    sarasaSplitScInstalled: env.hasSarasaSplitScTtf,
+    superTtcActive: env.hasSarasaSuperTtc,
+    orphanSuperTtcPendingReboot: env.orphanSuperTtcPendingReboot,
+    superTtcWarning,
+    unregisteredFiles,
+    unregisteredWarning,
+    missing: missingFonts,
+    autoDownloadCommand,
+    downloadUrl: !allRequiredFontsInstalled ? GOOGLE_DRIVE_URL : null,
+    directDownloadUrls: !allRequiredFontsInstalled
+      ? {
+          anthropicSerifRegular: FONT_DOWNLOAD_CATALOG.anthropicSerifRegular.url,
+          anthropicSerifBold: FONT_DOWNLOAD_CATALOG.anthropicSerifBold.url,
+          anthropicMonoRegular: FONT_DOWNLOAD_CATALOG.anthropicMonoRegular.url,
+          sarasaSplitScZip: FONT_DOWNLOAD_CATALOG.sarasaSplitScZip.url,
+          sarasaSplitScView: WINDOWS_SARASA_SPLIT_VIEW_URL,
+          sarasaGithubReleases: SARASA_GITHUB_RELEASES_URL
+        }
+      : null
+  };
+}
+
 async function runDoctor() {
   const channel = getArg('--channel', 'auto');
   const defaultTarget = resolveGlobalInstallDir();
   const targetDir = path.resolve(getArg('--target-dir', resolveDefaultTargetDir()));
   const isCustomSandboxTarget =
     hasFlag('--target-dir') && !isSameTargetPath(targetDir, defaultTarget) && !hasFlag('--register-service');
+
   const env = await detectEnvironment(channel);
   const integrity = verifyCoreIntegrity(targetDir);
   const live = await inspectLiveWindow(env);
@@ -1254,11 +1571,7 @@ async function runDoctor() {
   const cdpMissingFlag = !isCustomSandboxTarget && !live.reachable && env.cdpStatus === 'missing_opt_in_flag';
   const remediation = cdpMissingFlag ? `node ${JSON.stringify(path.join(targetDir, 'install.mjs'))} relaunch` : null;
 
-  const missingFonts = [];
-  if (!env.hasAnthropicSerifFont) missingFonts.push('Anthropic Serif (AnthropicSerif-Regular.ttf, AnthropicSerif-Bold.ttf)');
-  if (!env.hasAnthropicMonoFont) missingFonts.push('Anthropic Mono (AnthropicMono-Regular.ttf)');
-  if (!env.hasSarasaFont) missingFonts.push('Sarasa Gothic (Sarasa-SuperTTC.ttc)');
-  const allRequiredFontsInstalled = missingFonts.length === 0;
+  const fontsReport = buildFontReport(env);
   const launcherMode =
     process.platform === 'darwin'
       ? env.launcherInstalled
@@ -1273,18 +1586,10 @@ async function runDoctor() {
     node: {
       version: env.nodeVer,
       execPath: process.execPath,
+      serviceExecPath: resolveStableNodeExecPath(),
       tier: env.tier
     },
-    fonts: {
-      uiLatinEngine: 'Google Sans Flex (native variable font)',
-      allRequiredInstalled: allRequiredFontsInstalled,
-      anthropicInstalled: env.hasAnthropicFont,
-      anthropicSerifInstalled: env.hasAnthropicSerifFont,
-      anthropicMonoInstalled: env.hasAnthropicMonoFont,
-      sarasaInstalled: env.hasSarasaFont,
-      missing: missingFonts,
-      downloadUrl: !allRequiredFontsInstalled ? GOOGLE_DRIVE_URL : null
-    },
+    fonts: fontsReport,
     antigravity: {
       channel: env.channel,
       appExists: env.appExists,
@@ -1303,6 +1608,7 @@ async function runDoctor() {
       clean: integrity.ok,
       modifiedFiles: integrity.modified
     },
+    keepAliveTask: inspectWindowsKeepAliveTask(targetDir),
     liveWindow: live
   };
 
@@ -1494,8 +1800,70 @@ function stopRunningDaemonProcesses() {
   return stopped;
 }
 
+function resolveStableNodeExecPath(execPath = process.execPath, platform = process.platform, home = os.homedir()) {
+  if (platform !== 'darwin' && platform !== 'linux') return execPath;
+  let realExec = '';
+  try {
+    realExec = fs.realpathSync(execPath);
+  } catch {
+    return execPath;
+  }
+
+  const dynamicCellarCandidates = [];
+  for (const probePath of [execPath, realExec]) {
+    const m = String(probePath || '').match(/^(.*)\/Cellar\/([^/]+)\/[^/]+\/bin\/(node)$/i);
+    if (m) {
+      const brewPrefix = m[1];
+      const formula = m[2];
+      const binName = m[3];
+      dynamicCellarCandidates.push(path.join(brewPrefix, 'bin', binName));
+      dynamicCellarCandidates.push(path.join(brewPrefix, 'opt', formula, 'bin', binName));
+    }
+  }
+
+  const envExtra = process.env.AG_STABLE_NODE_CANDIDATES
+    ? String(process.env.AG_STABLE_NODE_CANDIDATES)
+        .split(path.delimiter)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  const staticCandidates =
+    platform === 'darwin'
+      ? [
+          '/opt/homebrew/bin/node',
+          '/usr/local/bin/node',
+          '/opt/homebrew/opt/node/bin/node',
+          '/usr/local/opt/node/bin/node',
+          '/opt/homebrew/opt/node@22/bin/node',
+          '/opt/homebrew/opt/node@24/bin/node',
+          path.join(home, 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin', 'node'),
+          path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'node')
+        ]
+      : [
+          '/home/linuxbrew/.linuxbrew/bin/node',
+          '/home/linuxbrew/.linuxbrew/opt/node/bin/node',
+          '/usr/local/bin/node',
+          '/usr/bin/node',
+          path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'node')
+        ];
+
+  const seen = new Set();
+  for (const cand of [...envExtra, ...dynamicCellarCandidates, ...staticCandidates]) {
+    if (!cand || seen.has(cand)) continue;
+    seen.add(cand);
+    try {
+      if (fs.existsSync(cand) && fs.realpathSync(cand) === realExec) {
+        return cand;
+      }
+    } catch {}
+  }
+  return execPath;
+}
+
 function registerSystemService(targetDir, wrapperDaemon) {
   const home = os.homedir();
+  const serviceNodeExec = resolveStableNodeExecPath();
   if (process.platform === 'darwin') {
     const launchAgentsDir = path.join(home, 'Library', 'LaunchAgents');
     fs.mkdirSync(launchAgentsDir, { recursive: true });
@@ -1512,7 +1880,7 @@ function registerSystemService(targetDir, wrapperDaemon) {
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${process.execPath}</string>
+        <string>${serviceNodeExec}</string>
         <string>--disable-warning=ExperimentalWarning</string>
         <string>${wrapperDaemon}</string>
     </array>
@@ -1585,7 +1953,7 @@ function registerSystemService(targetDir, wrapperDaemon) {
       }
       if (!runningNow) runningNow = queryServiceState().loaded;
     } catch {}
-    return { platform: 'darwin', serviceFile: activePlist, label, runningNow };
+    return { platform: 'darwin', serviceFile: activePlist, label, nodeExec: serviceNodeExec, runningNow };
   }
 
   if (process.platform === 'linux') {
@@ -1597,7 +1965,7 @@ Description=Chuanban Antigravity Theme & Live Metrics Daemon
 After=default.target
 
 [Service]
-ExecStart="${process.execPath}" --disable-warning=ExperimentalWarning "${wrapperDaemon}"
+ExecStart="${serviceNodeExec}" --disable-warning=ExperimentalWarning "${wrapperDaemon}"
 Restart=always
 RestartSec=3
 
@@ -1617,7 +1985,8 @@ WantedBy=default.target
     const startupDir = path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
     const vbsFile = path.join(startupDir, 'AntigravityThemeDaemon.vbs');
     const localVbsFile = path.join(targetDir, 'AntigravityThemeDaemon.vbs');
-    const cmd = `""${process.execPath}"" --disable-warning=ExperimentalWarning ""${wrapperDaemon}""`;
+    // 传入 --keep-alive：PT5M 周期保活探测到健康守护仍在运行时直接静默退出（不强杀清缓存），仅在进程意外退出/被误杀后自动复活
+    const cmd = `""${process.execPath}"" --disable-warning=ExperimentalWarning ""${wrapperDaemon}"" --keep-alive`;
     const vbsContent = `\uFEFFSet WshShell = CreateObject("WScript.Shell")\r\nWshShell.Run "${cmd}", 0, False\r\n`;
     try {
       // 使用 UTF-16LE (带 BOM) 写入本地启动跳板 VBS，彻底兼容 Windows 中文用户名路径 (wscript.exe 原生支持 UTF-16LE)
@@ -1629,6 +1998,10 @@ WantedBy=default.target
     let autostartMethod = 'none';
     let scheduledTaskStarted = false;
     let taskSettingsUpdated = false;
+    let taskEnabled = null;
+    let taskHasTimedRepetition = null;
+    let taskUpdateError = null;
+    let taskUpdateWarning = null;
     const xmlEsc = (s) =>
       String(s || '')
         .replace(/&/g, '&amp;')
@@ -1651,6 +2024,12 @@ WantedBy=default.target
     } catch {}
     const principalId = userSid || userAuthor;
     const sddl = `D:(A;;FA;;;BA)(A;;FA;;;SY)(A;;FA;;;IU)${userSid ? `(A;;FA;;;${userSid})` : ''}S:(ML;;NW;;;ME)`;
+    // LogonTrigger 上的 Repetition 要等登录事件发生后才开始，install/升级在登录之后执行，所以下次登录前不会重复；
+    // 改由 TimeTrigger 承载每 5 分钟的重复，不写 Duration 即无限期；
+    // 首次周期触发在 StartBoundary+5min，install 末尾的 /Run 会立即补跑一次。
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const nowLocal = new Date();
+    const startBoundary = `${nowLocal.getFullYear()}-${pad2(nowLocal.getMonth() + 1)}-${pad2(nowLocal.getDate())}T${pad2(nowLocal.getHours())}:${pad2(nowLocal.getMinutes())}:00`;
     const taskXml = [
       '\uFEFF<?xml version="1.0" encoding="UTF-16"?>',
       '<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
@@ -1670,6 +2049,7 @@ WantedBy=default.target
       '    <MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy>',
       '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>',
       '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>',
+      '    <StartWhenAvailable>true</StartWhenAvailable>',
       '    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>',
       '    <Enabled>true</Enabled>',
       '    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>',
@@ -1679,6 +2059,19 @@ WantedBy=default.target
       '      <Enabled>true</Enabled>',
       `      <UserId>${xmlEsc(principalId)}</UserId>`,
       '    </LogonTrigger>',
+      '    <TimeTrigger>',
+      '      <Repetition>',
+      '        <Interval>PT5M</Interval>',
+      '        <StopAtDurationEnd>false</StopAtDurationEnd>',
+      '      </Repetition>',
+      `      <StartBoundary>${startBoundary}</StartBoundary>`,
+      '      <Enabled>true</Enabled>',
+      '    </TimeTrigger>',
+      '    <SessionStateChangeTrigger>',
+      '      <Enabled>true</Enabled>',
+      '      <StateChange>SessionUnlock</StateChange>',
+      `      <UserId>${xmlEsc(principalId)}</UserId>`,
+      '    </SessionStateChangeTrigger>',
       '  </Triggers>',
       '  <Actions Context="Author">',
       '    <Exec>',
@@ -1694,25 +2087,46 @@ WantedBy=default.target
     try {
       fs.writeFileSync(tmpXmlPath, taskXml, 'utf16le');
       const createRes = spawnSync('schtasks', ['/Create', '/TN', 'AntigravityThemeDaemon', '/XML', tmpXmlPath, '/F'], {
-        stdio: 'ignore',
+        encoding: 'utf8',
         windowsHide: true,
         timeout: 6000
       });
       if (createRes.status === 0) {
         autostartMethod = 'schtasks';
         taskSettingsUpdated = true;
+        taskEnabled = true;
+        taskHasTimedRepetition = true;
       } else {
+        taskUpdateError =
+          String(createRes.stderr || createRes.stdout || '').trim() || `schtasks /Create exited with code ${createRes.status}`;
         // 兼容旧版高完整性创建的无 SDDL 计划任务：若同名任务已存在且指向当前 VBS，直接复用而不降级写 HKCU\Run 制造双路并发
         const queryRes = spawnSync('schtasks', ['/Query', '/TN', 'AntigravityThemeDaemon', '/XML'], {
           encoding: 'utf8',
           windowsHide: true,
           timeout: 4000
         });
-        if (queryRes.status === 0 && String(queryRes.stdout || '').toLowerCase().includes('antigravitythemedaemon.vbs')) {
+        if (
+          queryRes.status === 0 &&
+          String(queryRes.stdout || '')
+            .replace(/\0/g, '')
+            .toLowerCase()
+            .includes('antigravitythemedaemon.vbs')
+        ) {
           autostartMethod = 'schtasks';
+          const triggerCheck = inspectWindowsTaskXmlTriggers(queryRes.stdout);
+          taskEnabled = triggerCheck.taskEnabled;
+          taskHasTimedRepetition = triggerCheck.hasTimedRepetition;
+          if (!triggerCheck.taskEnabled || !triggerCheck.hasTimedRepetition) {
+            const installScriptPath = path.join(targetDir, 'install.mjs');
+            const reason = !triggerCheck.taskEnabled
+              ? '现有任务当前处于禁用状态（<Settings><Enabled>false</Enabled>）'
+              : '现有任务缺少定时重复触发器（安装后至下次登录前 5 分钟保活不会生效）';
+            taskUpdateWarning = `未能覆盖更新计划任务 AntigravityThemeDaemon（可能因旧任务由管理员权限创建），且${reason}。请以管理员身份运行 node "${installScriptPath}" install，或先管理员执行 schtasks /Delete /TN AntigravityThemeDaemon /F 后重装。`;
+          }
         }
       }
-    } catch {
+    } catch (err) {
+      taskUpdateError = taskUpdateError || String(err?.message || err);
     } finally {
       try {
         if (fs.existsSync(tmpXmlPath)) fs.unlinkSync(tmpXmlPath);
@@ -1794,7 +2208,9 @@ WantedBy=default.target
     let spawnedPid = null;
     if (!scheduledTaskStarted) {
       try {
+        // 固定工作目录为用户主目录，避免后台进程继承调用方终端的 CWD 导致该目录被占用无法删除
         const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', wrapperDaemon], {
+          cwd: os.homedir(),
           detached: true,
           stdio: 'ignore',
           windowsHide: true
@@ -1810,6 +2226,10 @@ WantedBy=default.target
       localVbsFile,
       scheduledTask: autostartMethod === 'schtasks' ? 'AntigravityThemeDaemon' : null,
       taskSettingsUpdated,
+      taskEnabled,
+      hasTimedRepetition: taskHasTimedRepetition,
+      taskUpdateError,
+      taskUpdateWarning,
       scheduledTaskStarted,
       spawnedPid,
       runningNow: Boolean(scheduledTaskStarted || spawnedPid)
@@ -1829,6 +2249,26 @@ async function runInstall() {
   const targetDir = path.resolve(getArg('--target-dir', defaultTarget));
   const isCustomSandboxTarget =
     hasFlag('--target-dir') && !isSameTargetPath(targetDir, defaultTarget) && !hasFlag('--register-service');
+
+  const VALID_LIGHT_PRESETS = new Set([
+    'native',
+    'morandi',
+    'absolutely',
+    'high-contrast',
+    'claude-desktop-purewhite',
+    'vintage-deep'
+  ]);
+  const VALID_DARK_PRESETS = new Set(['onyx', 'claude-warm']);
+  if (preset && !VALID_LIGHT_PRESETS.has(preset)) {
+    console.error(
+      `[ERROR] Invalid --preset "${preset}". Expected one of: native, morandi, absolutely, claude-desktop-purewhite, vintage-deep.`
+    );
+    process.exit(1);
+  }
+  if (darkPreset && !VALID_DARK_PRESETS.has(darkPreset)) {
+    console.error(`[ERROR] Invalid --dark-preset "${darkPreset}". Expected one of: onyx, claude-warm.`);
+    process.exit(1);
+  }
 
   const env = await detectEnvironment(channel);
   if (!env.nodeBasicOk) {
@@ -1922,9 +2362,9 @@ async function runInstall() {
     currentCfg.channel = 'auto';
   }
   if (preset) {
-    currentCfg.preset = preset;
-  } else if (!currentCfg.preset) {
-    currentCfg.preset = 'high-contrast';
+    currentCfg.preset = preset === 'high-contrast' ? 'morandi' : preset;
+  } else if (!currentCfg.preset || currentCfg.preset === 'high-contrast') {
+    currentCfg.preset = 'morandi';
   }
   if (darkPreset) {
     currentCfg.darkPreset = darkPreset;
@@ -2001,13 +2441,26 @@ async function runInstall() {
 
   const postEnv = isCustomSandboxTarget ? env : await detectEnvironment(currentCfg.channel);
   const live = isCustomSandboxTarget ? { skipped: true, reason: 'custom-target-dir' } : await inspectLiveWindow(postEnv);
+  const fontsReport = buildFontReport(postEnv);
   const needsCdpRelaunch =
     !isCustomSandboxTarget && !live.reachable && postEnv.cdpStatus === 'missing_opt_in_flag';
+  const keepAliveUpgradeWarning =
+    !isCustomSandboxTarget && serviceInfo && typeof serviceInfo === 'object' ? serviceInfo.taskUpdateWarning || null : null;
+  const warnings = keepAliveUpgradeWarning ? [keepAliveUpgradeWarning] : [];
+  if (!fontsReport.allRequiredInstalled) {
+    warnings.push(
+      `Missing required fonts (${fontsReport.missing.join('; ')}). Run: node ${JSON.stringify(path.join(targetDir, 'install.mjs'))} install-fonts --auto-download`
+    );
+  }
+  if (fontsReport.unregisteredWarning) {
+    warnings.push(fontsReport.unregisteredWarning);
+  }
+  const installOk = !keepAliveUpgradeWarning;
   console.log(
     '\n[Install Complete]',
     JSON.stringify(
       {
-        ok: true,
+        ok: installOk,
         targetDir,
         backupCreated,
         userSynced: syncUser,
@@ -2015,6 +2468,8 @@ async function runInstall() {
         argvStatus,
         launcherStatus,
         serviceInfo,
+        fonts: fontsReport,
+        warnings,
         config: currentCfg,
         cdpStatus: isCustomSandboxTarget ? 'sandbox' : live.reachable ? 'ready' : postEnv.cdpStatus,
         relaunchHint: needsCdpRelaunch
@@ -2026,6 +2481,15 @@ async function runInstall() {
       2
     )
   );
+  if (keepAliveUpgradeWarning) {
+    console.warn(`\n[WARN] ${keepAliveUpgradeWarning}`);
+    process.exitCode = 1;
+  }
+  if (!fontsReport.allRequiredInstalled) {
+    console.warn(
+      `\n[WARN] Missing fonts detected: ${fontsReport.missing.join(' | ')}\n       Auto-download & install: node ${JSON.stringify(path.join(targetDir, 'install.mjs'))} install-fonts --auto-download`
+    );
+  }
 }
 
 function hasRecentActiveConversationWal(channel = 'auto', windowSec = 15) {
@@ -2181,6 +2645,7 @@ async function runRelaunch() {
     });
   } else if (launchTarget.exePath) {
     const child = spawn(launchTarget.exePath, ['--remote-debugging-port=0'], {
+      cwd: os.homedir(),
       detached: true,
       stdio: 'ignore',
       windowsHide: false
@@ -2237,8 +2702,10 @@ async function runVerify() {
   if (channel && channel !== 'auto') daemonArgs.push('--channel', channel);
 
   spawnSync(process.execPath, daemonArgs, { stdio: 'inherit' });
+
   const env = await detectEnvironment(channel);
   const live = await inspectLiveWindow(env);
+  const fontsReport = buildFontReport(env);
   const ok = Boolean(live.reachable && (live.state?.hasStyle || live.pages === 0));
   console.log(
     JSON.stringify(
@@ -2248,6 +2715,12 @@ async function runVerify() {
         themeStyle: Boolean(live.state?.hasStyle),
         safeMode,
         channel,
+        fonts: {
+          allRequiredInstalled: fontsReport.allRequiredInstalled,
+          missing: fontsReport.missing,
+          unregisteredFiles: fontsReport.unregisteredFiles,
+          autoDownloadCommand: fontsReport.autoDownloadCommand
+        },
         live
       },
       null,
@@ -2316,6 +2789,7 @@ async function runRollback() {
       if (!restartedViaTask) {
         try {
           const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', fs.existsSync(wrapperDaemon) ? wrapperDaemon : realDaemon], {
+            cwd: os.homedir(),
             detached: true,
             stdio: 'ignore',
             windowsHide: true
@@ -2345,12 +2819,449 @@ async function runRollback() {
   );
 }
 
-function runInstallFonts() {
-  const fromDir = getArg('--from', null);
-  if (!fromDir || !fs.existsSync(fromDir)) {
-    console.error('Usage: node install.mjs install-fonts --from <font-folder-path>');
+let _cachedWinSystemProxy = undefined;
+function detectWindowsSystemProxy() {
+  if (process.platform !== 'win32') return null;
+  if (_cachedWinSystemProxy !== undefined) return _cachedWinSystemProxy;
+  _cachedWinSystemProxy = null;
+  const envHasProxy = Boolean(
+    process.env.HTTPS_PROXY ||
+      process.env.https_proxy ||
+      process.env.HTTP_PROXY ||
+      process.env.http_proxy ||
+      process.env.ALL_PROXY ||
+      process.env.all_proxy
+  );
+  if (envHasProxy) return null;
+  try {
+    const r = spawnSync(
+      'reg',
+      ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'],
+      { encoding: 'utf8', windowsHide: true, timeout: 4000 }
+    );
+    if (r.status !== 0 || !r.stdout) return null;
+    const out = String(r.stdout);
+    const enabledMatch = out.match(/ProxyEnable\s+REG_DWORD\s+0x([0-9a-f]+)/i);
+    if (!enabledMatch || parseInt(enabledMatch[1], 16) !== 1) return null;
+    const serverMatch = out.match(/ProxyServer\s+REG_SZ\s+([^\r\n]+)/i);
+    if (!serverMatch) return null;
+    const raw = serverMatch[1].trim();
+    if (!raw) return null;
+    let picked = raw;
+    if (raw.includes('=')) {
+      const pairs = raw.split(';').map((s) => s.trim()).filter(Boolean);
+      const map = Object.create(null);
+      for (const p of pairs) {
+        const idx = p.indexOf('=');
+        if (idx > 0) map[p.slice(0, idx).trim().toLowerCase()] = p.slice(idx + 1).trim();
+      }
+      if (map.https) picked = map.https;
+      else if (map.http) picked = map.http;
+      else if (map.socks) picked = map.socks.includes('://') ? map.socks : `socks5h://${map.socks}`;
+      else picked = pairs[0].slice(pairs[0].indexOf('=') + 1).trim();
+    }
+    if (picked && !/^[a-z0-9+.-]+:\/\//i.test(picked)) {
+      picked = `http://${picked}`;
+    }
+    _cachedWinSystemProxy = picked || null;
+  } catch {
+    _cachedWinSystemProxy = null;
+  }
+  return _cachedWinSystemProxy;
+}
+
+function validateDownloadedBinary(filePath, { kind = 'font', minBytes = 1024 } = {}) {
+  try {
+    if (!fs.existsSync(filePath)) return { ok: false, reason: 'file_missing', bytes: 0 };
+    const st = fs.statSync(filePath);
+    const bytes = st.size;
+    const fd = fs.openSync(filePath, 'r');
+    const head = Buffer.alloc(Math.min(64, Math.max(0, bytes)));
+    try {
+      if (head.length > 0) fs.readSync(fd, head, 0, head.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const asciiPrefix = head.toString('utf8').trimStart().toLowerCase();
+    if (asciiPrefix.startsWith('<!doctype') || asciiPrefix.startsWith('<html') || asciiPrefix.startsWith('<?xml')) {
+      return { ok: false, reason: 'html_interstitial_or_quota_exceeded', bytes };
+    }
+    if (bytes < minBytes) {
+      return { ok: false, reason: 'file_too_small', bytes, minBytes };
+    }
+    if (kind === 'zip') {
+      const isZip = head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+      if (!isZip) return { ok: false, reason: 'invalid_zip_magic', bytes };
+    } else if (kind === 'font') {
+      const tag = head.length >= 4 ? head.subarray(0, 4).toString('ascii') : '';
+      const isTtf = head.length >= 4 && head[0] === 0x00 && head[1] === 0x01 && head[2] === 0x00 && head[3] === 0x00;
+      const isValidFont = isTtf || tag === 'OTTO' || tag === 'true' || tag === 'ttcf';
+      if (!isValidFont) return { ok: false, reason: 'invalid_font_magic', bytes };
+    }
+    return { ok: true, bytes };
+  } catch (err) {
+    return { ok: false, reason: 'validation_error', error: String(err?.message || err), bytes: 0 };
+  }
+}
+
+async function downloadFontAsset(asset, downloadDir, { force = false } = {}) {
+  fs.mkdirSync(downloadDir, { recursive: true });
+  const finalPath = path.join(downloadDir, asset.filename);
+  if (!force && fs.existsSync(finalPath)) {
+    const cachedCheck = validateDownloadedBinary(finalPath, asset);
+    if (cachedCheck.ok) {
+      return {
+        ok: true,
+        id: asset.id,
+        filename: asset.filename,
+        filePath: finalPath,
+        cached: true,
+        bytes: cachedCheck.bytes,
+        method: 'cache'
+      };
+    }
+  }
+
+  const partPath = `${finalPath}.part-${process.pid}-${Date.now()}`;
+  const cleanupPart = () => {
+    try {
+      if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+    } catch {}
+  };
+  const timeoutSec = asset.timeoutSec || 300;
+  const attempts = [];
+
+  // Strategy 1: curl / curl.exe（跨平台原生支持 HTTP_PROXY/HTTPS_PROXY，Windows 下自动探测系统注册表代理）
+  try {
+    const curlBin = process.platform === 'win32' ? 'curl.exe' : 'curl';
+    const winProxy = detectWindowsSystemProxy();
+    const curlArgs = [
+      '-fSL',
+      '--retry',
+      '2',
+      '--retry-delay',
+      '2',
+      '--connect-timeout',
+      '15',
+      '--max-time',
+      String(timeoutSec)
+    ];
+    if (winProxy) curlArgs.push('--proxy', winProxy);
+    curlArgs.push('-o', partPath, asset.url);
+    const r = spawnSync(curlBin, curlArgs, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: (timeoutSec + 15) * 1000
+    });
+    if (r.status === 0 && !r.error) {
+      const chk = validateDownloadedBinary(partPath, asset);
+      if (chk.ok) {
+        fs.renameSync(partPath, finalPath);
+        return {
+          ok: true,
+          id: asset.id,
+          filename: asset.filename,
+          filePath: finalPath,
+          cached: false,
+          bytes: chk.bytes,
+          method: winProxy ? 'curl(win-system-proxy)' : 'curl'
+        };
+      }
+      attempts.push({ method: 'curl', ok: false, ...chk });
+    } else {
+      attempts.push({
+        method: 'curl',
+        ok: false,
+        status: r.status,
+        error: String(r.error?.message || r.stderr || '').trim().slice(0, 240)
+      });
+    }
+  } catch (err) {
+    attempts.push({ method: 'curl', ok: false, error: String(err?.message || err).slice(0, 240) });
+  }
+  cleanupPart();
+
+  // Strategy 2 (Windows): PowerShell .NET HttpClient（原生继承 WinINET/PAC/系统代理与 TLS 1.2+，流式落盘零高内存）
+  if (process.platform === 'win32') {
+    const cfgTmp = path.join(os.tmpdir(), `ag-dl-cfg-${process.pid}-${Date.now()}.json`);
+    try {
+      fs.writeFileSync(cfgTmp, JSON.stringify({ url: asset.url, out: partPath, timeoutSec }), 'utf8');
+      const psScript = [
+        '$ErrorActionPreference = "Stop"',
+        '[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12',
+        'Add-Type -AssemblyName System.Net.Http',
+        `$cfg = Get-Content -LiteralPath '${cfgTmp.replace(/'/g, "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json`,
+        '$handler = New-Object System.Net.Http.HttpClientHandler',
+        '$handler.AllowAutoRedirect = $true',
+        '$handler.UseProxy = $true',
+        '$client = New-Object System.Net.Http.HttpClient($handler)',
+        '$client.Timeout = [TimeSpan]::FromSeconds([int]$cfg.timeoutSec)',
+        'try {',
+        '  $resp = $client.GetAsync([string]$cfg.url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()',
+        '  $resp.EnsureSuccessStatusCode() | Out-Null',
+        '  $inStream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()',
+        '  $outStream = [System.IO.File]::Create([string]$cfg.out)',
+        '  try { $inStream.CopyTo($outStream) } finally { $outStream.Dispose(); $inStream.Dispose() }',
+        '} finally { $client.Dispose(); $handler.Dispose() }'
+      ].join('\n');
+      const r = spawnSync(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psScript],
+        {
+          stdio: ['ignore', 'ignore', 'pipe'],
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: (timeoutSec + 20) * 1000
+        }
+      );
+      if (r.status === 0 && !r.error) {
+        const chk = validateDownloadedBinary(partPath, asset);
+        if (chk.ok) {
+          fs.renameSync(partPath, finalPath);
+          return {
+            ok: true,
+            id: asset.id,
+            filename: asset.filename,
+            filePath: finalPath,
+            cached: false,
+            bytes: chk.bytes,
+            method: 'powershell-httpclient'
+          };
+        }
+        attempts.push({ method: 'powershell-httpclient', ok: false, ...chk });
+      } else {
+        attempts.push({
+          method: 'powershell-httpclient',
+          ok: false,
+          status: r.status,
+          error: String(r.error?.message || r.stderr || '').trim().slice(0, 240)
+        });
+      }
+    } catch (err) {
+      attempts.push({ method: 'powershell-httpclient', ok: false, error: String(err?.message || err).slice(0, 240) });
+    } finally {
+      try {
+        if (fs.existsSync(cfgTmp)) fs.unlinkSync(cfgTmp);
+      } catch {}
+    }
+    cleanupPart();
+  }
+
+  // Strategy 3: Node 22+ 原生 fetch 流式下载兜底
+  try {
+    const res = await fetch(asset.url, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutSec * 1000)
+    });
+    if (!res.ok || !res.body) {
+      attempts.push({ method: 'node-fetch', ok: false, status: res.status });
+    } else {
+      await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(partPath));
+      const chk = validateDownloadedBinary(partPath, asset);
+      if (chk.ok) {
+        fs.renameSync(partPath, finalPath);
+        return {
+          ok: true,
+          id: asset.id,
+          filename: asset.filename,
+          filePath: finalPath,
+          cached: false,
+          bytes: chk.bytes,
+          method: 'node-fetch'
+        };
+      }
+      attempts.push({ method: 'node-fetch', ok: false, ...chk });
+    }
+  } catch (err) {
+    attempts.push({ method: 'node-fetch', ok: false, error: String(err?.message || err).slice(0, 240) });
+  }
+  cleanupPart();
+
+  return {
+    ok: false,
+    id: asset.id,
+    filename: asset.filename,
+    url: asset.url,
+    manualUrl: asset.viewUrl || GOOGLE_DRIVE_URL,
+    attempts
+  };
+}
+
+function extractZipArchive(zipPath, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  if (process.platform === 'win32') {
+    const cfgTmp = path.join(os.tmpdir(), `ag-unzip-cfg-${process.pid}-${Date.now()}.json`);
+    try {
+      fs.writeFileSync(cfgTmp, JSON.stringify({ zip: path.resolve(zipPath), dest: path.resolve(destDir) }), 'utf8');
+      const psUnzip = [
+        '$ErrorActionPreference = "Stop"',
+        'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+        `$cfg = Get-Content -LiteralPath '${cfgTmp.replace(/'/g, "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json`,
+        '[System.IO.Compression.ZipFile]::ExtractToDirectory([string]$cfg.zip, [string]$cfg.dest)'
+      ].join('\n');
+      const r = spawnSync(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psUnzip],
+        { encoding: 'utf8', windowsHide: true, timeout: 120000 }
+      );
+      if (r.status === 0 && !r.error) return { ok: true, method: 'dotnet-zipfile' };
+      return { ok: false, error: String(r.error?.message || r.stderr || 'ZipFile extract failed').trim().slice(0, 240) };
+    } finally {
+      try {
+        if (fs.existsSync(cfgTmp)) fs.unlinkSync(cfgTmp);
+      } catch {}
+    }
+  }
+
+  const uz = spawnSync('unzip', ['-oq', zipPath, '-d', destDir], { encoding: 'utf8', timeout: 120000 });
+  if (uz.status === 0 && !uz.error) return { ok: true, method: 'unzip' };
+  if (process.platform === 'darwin') {
+    const dt = spawnSync('ditto', ['-xk', zipPath, destDir], { encoding: 'utf8', timeout: 120000 });
+    if (dt.status === 0 && !dt.error) return { ok: true, method: 'ditto' };
+  }
+  const py = spawnSync('python3', ['-m', 'zipfile', '-e', zipPath, destDir], { encoding: 'utf8', timeout: 120000 });
+  if (py.status === 0 && !py.error) return { ok: true, method: 'python3-zipfile' };
+  return {
+    ok: false,
+    error: String(uz.stderr || py.stderr || uz.error?.message || 'Failed to extract zip archive').trim().slice(0, 240)
+  };
+}
+
+function selectMissingFontAssets(env, { includeAll = false, useSuperTtc = false, wantSplitSarasa = false } = {}) {
+  const assets = [];
+  if (includeAll || !env.hasAnthropicSerifFont || !env.hasAnthropicSerifRegular) {
+    if (includeAll || !env.hasAnthropicSerifFont || (!env.hasAnthropicSerifRegular && env.hasAnthropicSerifBold)) {
+      assets.push(FONT_DOWNLOAD_CATALOG.anthropicSerifRegular);
+    }
+  }
+  if (includeAll || !env.hasAnthropicSerifFont || !env.hasAnthropicSerifBold) {
+    if (includeAll || !env.hasAnthropicSerifFont || (env.hasAnthropicSerifRegular && !env.hasAnthropicSerifBold)) {
+      assets.push(FONT_DOWNLOAD_CATALOG.anthropicSerifBold);
+    }
+  }
+  if (includeAll || !env.hasAnthropicMonoFont) {
+    assets.push(FONT_DOWNLOAD_CATALOG.anthropicMonoRegular);
+  }
+  const needSarasa = includeAll || !env.hasSarasaFont || (wantSplitSarasa && !env.hasSarasaSplitScTtf);
+  if (needSarasa) {
+    if (useSuperTtc && process.platform !== 'win32') {
+      assets.push(FONT_DOWNLOAD_CATALOG.sarasaSuperTtc);
+    } else {
+      assets.push(FONT_DOWNLOAD_CATALOG.sarasaSplitScZip);
+    }
+  }
+  return assets;
+}
+
+async function downloadFontsBatch({ downloadDir, includeAll = false, force = false, useSuperTtc = false, wantSplitSarasa = false } = {}) {
+  const env = await detectEnvironment('auto');
+  const assets = selectMissingFontAssets(env, { includeAll, useSuperTtc, wantSplitSarasa });
+  const targetDownloadDir = path.resolve(downloadDir || path.join(os.tmpdir(), 'chuanban-ag-fonts-cache'));
+  fs.mkdirSync(targetDownloadDir, { recursive: true });
+  const results = [];
+  for (const asset of assets) {
+    process.stderr.write(`[Fonts] Downloading ${asset.filename} ...\n`);
+    const r = await downloadFontAsset(asset, targetDownloadDir, { force });
+    results.push(r);
+  }
+  const failed = results.filter((r) => !r.ok);
+  return {
+    ok: failed.length === 0,
+    downloadDir: targetDownloadDir,
+    requestedCount: assets.length,
+    downloadedCount: results.filter((r) => r.ok && !r.cached).length,
+    cachedCount: results.filter((r) => r.ok && r.cached).length,
+    failedCount: failed.length,
+    results,
+    manualFallbackHint:
+      failed.length > 0
+        ? `Automatic download failed for ${failed.map((f) => f.filename).join(', ')} (likely terminal network/proxy restriction or Google Drive temporary quota). Download manually in browser from ${GOOGLE_DRIVE_URL} (Windows Sarasa Split ZIP: ${WINDOWS_SARASA_SPLIT_VIEW_URL}), then run: node install.mjs install-fonts --from "<downloaded-folder-or-zip>"`
+        : null
+  };
+}
+
+async function runDownloadFontsCmd() {
+  const downloadDir = getArg('--dir', path.join(os.tmpdir(), 'chuanban-ag-fonts-cache'));
+  const includeAll = hasFlag('--all');
+  const force = hasFlag('--force');
+  const useSuperTtc = hasFlag('--super-ttc');
+  const summary = await downloadFontsBatch({ downloadDir, includeAll, force, useSuperTtc });
+  console.log(JSON.stringify(summary, null, 2));
+  if (!summary.ok) process.exitCode = 1;
+}
+
+async function runInstallFonts() {
+  const autoDownload = hasFlag('--auto-download');
+  const fromArg = getArg('--from', null);
+  const shouldRetireSuperTtc = process.platform === 'win32' && hasFlag('--retire-super-ttc');
+
+  if (!autoDownload && !fromArg) {
+    console.error(
+      'Usage:\n  node install.mjs install-fonts --auto-download [--dir <cache-dir>] [--force] [--retire-super-ttc]\n  node install.mjs install-fonts --from <font-folder-or-zip-path> [--retire-super-ttc]'
+    );
     process.exit(1);
   }
+  if (fromArg && !fs.existsSync(fromArg)) {
+    console.error(`[ERROR] --from path does not exist: ${fromArg}`);
+    process.exit(1);
+  }
+
+  let downloadSummary = null;
+  const sourceInputs = [];
+  if (fromArg) sourceInputs.push(path.resolve(fromArg));
+  if (autoDownload) {
+    const preEnv = await detectEnvironment('auto');
+    downloadSummary = await downloadFontsBatch({
+      downloadDir: getArg('--dir', null),
+      includeAll: hasFlag('--all'),
+      force: hasFlag('--force'),
+      useSuperTtc: hasFlag('--super-ttc'),
+      wantSplitSarasa: shouldRetireSuperTtc
+    });
+    if (downloadSummary.requestedCount > 0) {
+      for (const r of downloadSummary.results) {
+        if (r.ok && r.filePath && fs.existsSync(r.filePath)) {
+          sourceInputs.push(r.filePath);
+        }
+      }
+    }
+    // Windows 下如果已有手动复制但未写注册表的目标用户字体，仅将其精准加入队列补齐注册表（避免误扫整个目录或重新注册已退订的 SuperTTC）
+    if (
+      process.platform === 'win32' &&
+      Array.isArray(preEnv.unregisteredWinFonts) &&
+      preEnv.unregisteredWinFonts.length > 0 &&
+      preEnv.winUserFontsDir &&
+      fs.existsSync(preEnv.winUserFontsDir)
+    ) {
+      for (const fname of preEnv.unregisteredWinFonts) {
+        const fp = path.join(preEnv.winUserFontsDir, fname);
+        if (fs.existsSync(fp)) sourceInputs.push(fp);
+      }
+    }
+    if (downloadSummary.requestedCount === 0 && sourceInputs.length === 0) {
+      const superTtcRetirement = shouldRetireSuperTtc
+        ? retireWindowsSuperTtc({ force: hasFlag('--force') })
+        : null;
+      const postEnv = await detectEnvironment('auto');
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            alreadyInstalled: true,
+            platform: process.platform,
+            downloadSummary,
+            ...(superTtcRetirement ? { superTtcRetirement } : {}),
+            postCheck: buildFontReport(postEnv)
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
+  }
+
   const home = os.homedir();
   const destDir =
     process.platform === 'darwin'
@@ -2362,129 +3273,412 @@ function runInstallFonts() {
   fs.mkdirSync(destDir, { recursive: true });
   const installed = [];
   const skippedLocked = [];
+  const extractedArchives = [];
+  const archiveExtractErrors = [];
+  const tempExtractDirs = [];
+  const fontFileQueue = [];
+  const seenSourceFiles = new Set();
 
-  const walkFonts = (dir) => {
+  const collectFontsFromDir = (dir, depth = 0) => {
     for (const entry of fs.readdirSync(dir)) {
       const full = path.join(dir, entry);
-      const st = fs.statSync(full);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch {
+        continue;
+      }
       if (st.isDirectory()) {
-        walkFonts(full);
+        if (entry === '__MACOSX') continue;
+        collectFontsFromDir(full, depth + 1);
       } else if (/\.(ttf|otf|ttc)$/i.test(entry)) {
-        const destPath = path.join(destDir, entry);
-        let copied = false;
-        if (isSameTargetPath(full, destPath)) {
-          skippedLocked.push(destPath);
+        const key = canonicalPath(full).toLowerCase();
+        if (!seenSourceFiles.has(key)) {
+          seenSourceFiles.add(key);
+          fontFileQueue.push({ full, entry });
+        }
+      } else if (depth <= 2 && /\.zip$/i.test(entry) && /sarasa|anthropic|font/i.test(entry)) {
+        const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-font-zip-'));
+        tempExtractDirs.push(stageDir);
+        const ex = extractZipArchive(full, stageDir);
+        if (ex.ok) {
+          extractedArchives.push({ archive: full, method: ex.method });
+          collectFontsFromDir(stageDir, depth + 1);
         } else {
-          try {
-            fs.copyFileSync(full, destPath);
-            copied = true;
-          } catch (err) {
-            if (
-              process.platform === 'win32' &&
-              (err?.code === 'EBUSY' || err?.code === 'EPERM' || err?.code === 'EACCES') &&
-              fs.existsSync(destPath)
-            ) {
-              skippedLocked.push(destPath);
-            } else {
-              throw err;
-            }
-          }
+          archiveExtractErrors.push({ archive: full, error: ex.error });
         }
-        if (process.platform === 'win32') {
-          const ext = path.extname(entry).toLowerCase();
-          const typeSuffix = ext === '.otf' ? ' (OpenType)' : ' (TrueType)';
-          const fontTitle = entry.replace(/\.(ttf|otf|ttc)$/i, '') + typeSuffix;
-          try {
-            spawnSync(
-              'reg',
-              [
-                'add',
-                'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts',
-                '/v',
-                fontTitle,
-                '/t',
-                'REG_SZ',
-                '/d',
-                destPath,
-                '/f'
-              ],
-              { stdio: 'ignore', windowsHide: true }
-            );
-          } catch {}
-        }
-        if (copied) installed.push(destPath);
       }
     }
   };
 
-  walkFonts(path.resolve(fromDir));
+  try {
+    for (const src of sourceInputs) {
+      const st = fs.statSync(src);
+      if (st.isFile()) {
+        if (/\.zip$/i.test(src)) {
+          const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-font-zip-'));
+          tempExtractDirs.push(stageDir);
+          const ex = extractZipArchive(src, stageDir);
+          if (ex.ok) {
+            extractedArchives.push({ archive: src, method: ex.method });
+            collectFontsFromDir(stageDir, 0);
+          } else {
+            archiveExtractErrors.push({ archive: src, error: ex.error });
+          }
+        } else if (/\.(ttf|otf|ttc)$/i.test(src)) {
+          const key = canonicalPath(src).toLowerCase();
+          if (!seenSourceFiles.has(key)) {
+            seenSourceFiles.add(key);
+            fontFileQueue.push({ full: src, entry: path.basename(src) });
+          }
+        }
+      } else if (st.isDirectory()) {
+        collectFontsFromDir(src, 0);
+      }
+    }
+
+    const seenDestPaths = new Set();
+    for (const { full, entry } of fontFileQueue) {
+      const destPath = path.join(destDir, entry);
+      const destKey = canonicalPath(destPath).toLowerCase();
+      if (seenDestPaths.has(destKey)) continue;
+      seenDestPaths.add(destKey);
+      let copied = false;
+      if (isSameTargetPath(full, destPath)) {
+        skippedLocked.push(destPath);
+      } else {
+        try {
+          fs.copyFileSync(full, destPath);
+          copied = true;
+        } catch (err) {
+          if (
+            process.platform === 'win32' &&
+            (err?.code === 'EBUSY' || err?.code === 'EPERM' || err?.code === 'EACCES') &&
+            fs.existsSync(destPath)
+          ) {
+            skippedLocked.push(destPath);
+          } else {
+            throw err;
+          }
+        }
+      }
+      if (copied) installed.push(destPath);
+    }
+  } finally {
+    for (const d of tempExtractDirs) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
+  const allTargetFontPaths = Array.from(new Set([...installed, ...skippedLocked]));
   let fontBroadcastOk = process.platform !== 'win32';
   let fontRegisteredCount = 0;
-  if (process.platform === 'win32' && (installed.length > 0 || skippedLocked.length > 0)) {
+  let registryWrittenCount = process.platform === 'win32' ? 0 : allTargetFontPaths.length;
+  let registryFailed = [];
+
+  if (process.platform === 'win32' && allTargetFontPaths.length > 0) {
     fontBroadcastOk = false;
+    const regItems = allTargetFontPaths.map((destPath) => {
+      const entry = path.basename(destPath);
+      const ext = path.extname(entry).toLowerCase();
+      const typeSuffix = ext === '.otf' ? ' (OpenType)' : ' (TrueType)';
+      const title = entry.replace(/\.(ttf|otf|ttc)$/i, '') + typeSuffix;
+      return { path: destPath, title };
+    });
+    const listTmp = path.join(os.tmpdir(), `ag-fonts-${process.pid}-${Date.now()}.json`);
     try {
-      const fontListJson = JSON.stringify(Array.from(new Set([...installed, ...skippedLocked])));
-      const listTmp = path.join(os.tmpdir(), `ag-fonts-${process.pid}-${Date.now()}.json`);
-      fs.writeFileSync(listTmp, fontListJson, 'utf8');
-      try {
-        const psNotify = [
-          '$ErrorActionPreference = "Stop"',
-          'Add-Type -TypeDefinition @"',
-          'using System; using System.Runtime.InteropServices;',
-          'public static class AgFontBroadcast {',
-          '  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResource(string lpFileName);',
-          '  [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool SendNotifyMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);',
-          '}',
-          '"@',
-          `$parsed = Get-Content -LiteralPath '${listTmp.replace(/'/g, "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json`,
-          '$paths = @(foreach ($x in $parsed) { if ($null -ne $x) { [string]$x } })',
-          '$added = 0',
-          'foreach ($fp in $paths) { if ($fp -and ([AgFontBroadcast]::AddFontResource($fp) -gt 0)) { $added++ } }',
-          '$notified = [AgFontBroadcast]::SendNotifyMessage([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero)',
-          '@{ added = $added; notified = [bool]$notified } | ConvertTo-Json -Compress'
-        ].join('\n');
-        const psRes = spawnSync(
-          'powershell',
-          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psNotify],
-          {
-            encoding: 'utf8',
-            windowsHide: true,
-            timeout: 25000
-          }
-        );
-        if (psRes.status === 0) {
-          const notifyData = JSON.parse(String(psRes.stdout || '').trim() || '{}');
-          fontRegisteredCount = Number(notifyData.added) || 0;
-          fontBroadcastOk = fontRegisteredCount > 0 && Boolean(notifyData.notified);
+      fs.writeFileSync(listTmp, JSON.stringify(regItems), 'utf8');
+      // 使用 .NET Microsoft.Win32.Registry UTF-16 原生写入 HKCU\...\Fonts（规避中文用户名下 reg.exe CP936 路径乱码），并合并广播 WM_FONTCHANGE
+      const psNotify = [
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+        '$ErrorActionPreference = "Stop"',
+        'Add-Type -TypeDefinition @"',
+        'using System; using System.Runtime.InteropServices;',
+        'public static class AgFontBroadcast {',
+        '  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResource(string lpFileName);',
+        '  [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool SendNotifyMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);',
+        '}',
+        '"@',
+        `$parsed = Get-Content -LiteralPath '${listTmp.replace(/'/g, "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json`,
+        '$items = @($parsed)',
+        '$regOk = 0',
+        '$regFailed = New-Object System.Collections.Generic.List[string]',
+        '$sk = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts")',
+        'if ($null -ne $sk) {',
+        '  try {',
+        '    foreach ($it in $items) {',
+        '      if ($null -eq $it -or -not $it.path -or -not $it.title) { continue }',
+        '      try {',
+        '        $sk.SetValue([string]$it.title, [string]$it.path, [Microsoft.Win32.RegistryValueKind]::String)',
+        '        $regOk++',
+        '      } catch { $regFailed.Add([string]$it.title) }',
+        '    }',
+        '  } finally { $sk.Dispose() }',
+        '} else {',
+        '  foreach ($it in $items) { if ($it.title) { $regFailed.Add([string]$it.title) } }',
+        '}',
+        '$added = 0',
+        'foreach ($it in $items) { if ($it -and $it.path -and ([AgFontBroadcast]::AddFontResource([string]$it.path) -gt 0)) { $added++ } }',
+        '$notified = [AgFontBroadcast]::SendNotifyMessage([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero)',
+        '[PSCustomObject]@{ regOk = $regOk; regFailed = @($regFailed); added = $added; notified = [bool]$notified } | ConvertTo-Json -Compress'
+      ].join('\n');
+      const psRes = spawnSync(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psNotify],
+        {
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 30000
         }
-      } finally {
-        try {
-          if (fs.existsSync(listTmp)) fs.unlinkSync(listTmp);
-        } catch {}
+      );
+      if (psRes.status === 0) {
+        const notifyData = JSON.parse(String(psRes.stdout || '').trim() || '{}');
+        registryWrittenCount = Number(notifyData.regOk) || 0;
+        registryFailed = Array.isArray(notifyData.regFailed)
+          ? notifyData.regFailed
+          : notifyData.regFailed
+          ? [String(notifyData.regFailed)]
+          : [];
+        fontRegisteredCount = Number(notifyData.added) || 0;
+        fontBroadcastOk = fontRegisteredCount > 0 && Boolean(notifyData.notified);
+      } else {
+        registryFailed = regItems.map((i) => i.title);
       }
-    } catch {}
-  } else if (process.platform === 'linux') {
+    } catch {
+      registryFailed = regItems.map((i) => i.title);
+    } finally {
+      try {
+        if (fs.existsSync(listTmp)) fs.unlinkSync(listTmp);
+      } catch {}
+    }
+  } else if (process.platform === 'linux' && allTargetFontPaths.length > 0) {
     try {
       execSync('fc-cache -f 2>/dev/null || true');
     } catch {}
   }
+
+  const superTtcRetirement = shouldRetireSuperTtc
+    ? retireWindowsSuperTtc({ destDir, force: hasFlag('--force') })
+    : null;
+  const postEnv = await detectEnvironment('auto');
+  const postCheck = buildFontReport(postEnv);
+
+  const noFontsFound = allTargetFontPaths.length === 0;
+  const winRegistryFailed = process.platform === 'win32' && allTargetFontPaths.length > 0 && registryWrittenCount === 0;
+  const downloadFailed = Boolean(downloadSummary && !downloadSummary.ok);
+  const ok = !noFontsFound && !winRegistryFailed && !downloadFailed;
+  const failureReason = downloadFailed
+    ? 'font_download_failed'
+    : noFontsFound
+    ? 'no_font_files_found'
+    : winRegistryFailed
+    ? 'windows_font_registry_failed'
+    : null;
+  const restartAntigravityRequired = Boolean(
+    process.platform === 'win32' && allTargetFontPaths.length > 0 && postEnv.runningProcesses.length > 0
+  );
+
   console.log(
     JSON.stringify(
       {
-        ok: true,
+        ok,
+        ...(failureReason ? { reason: failureReason } : {}),
         platform: process.platform,
         destDir,
         installedCount: installed.length,
         skippedLockedCount: skippedLocked.length,
+        registryWrittenCount,
+        ...(registryFailed.length > 0 ? { registryFailed } : {}),
         fontRegisteredCount,
         fontBroadcastOk,
+        ...(extractedArchives.length > 0 ? { extractedArchives } : {}),
+        ...(archiveExtractErrors.length > 0 ? { archiveExtractErrors } : {}),
+        ...(downloadSummary ? { downloadSummary } : {}),
         installed,
-        skippedLocked
+        skippedLocked,
+        ...(superTtcRetirement ? { superTtcRetirement } : {}),
+        restartAntigravityRequired,
+        ...(restartAntigravityRequired
+          ? {
+              restartHint:
+                'Windows DirectWrite caches system fonts per process. Restart Antigravity once (e.g. `node install.mjs relaunch` when idle) for newly installed fonts to take effect.'
+            }
+          : {}),
+        postCheck
       },
       null,
       2
     )
   );
+  if (!ok) {
+    process.exitCode = 1;
+  }
+}
+
+function readWinHkcuFontRegistryEntries() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const ps = [
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+      '$sk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", $false)',
+      'if ($null -eq $sk) { Write-Output "[]"; exit 0 }',
+      'try {',
+      '  $items = @(foreach ($n in $sk.GetValueNames()) {',
+      '    if ($n) { [PSCustomObject]@{ name = [string]$n; data = [string]$sk.GetValue($n) } }',
+      '  })',
+      '  if ($items.Count -eq 0) { Write-Output "[]" } else { ConvertTo-Json -InputObject $items -Compress }',
+      '} finally { $sk.Dispose() }'
+    ].join('\n');
+    const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 12000
+    });
+    if (r.status === 0) {
+      const parsed = JSON.parse(String(r.stdout || '').trim() || '[]');
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }
+  } catch {}
+  // PowerShell 被策略拦截或超时时降级到 reg query 只读兜底
+  try {
+    const rq = spawnSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Fonts'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 5000
+    });
+    if (rq.status === 0 && rq.stdout) {
+      const items = [];
+      for (const line of String(rq.stdout).split(/\r?\n/)) {
+        const m = line.match(/^\s+(.+?)\s+REG_SZ\s+(.+?)\s*$/);
+        if (m) items.push({ name: m[1].trim(), data: m[2].trim() });
+      }
+      return items;
+    }
+  } catch {}
+  return null;
+}
+
+function retireWindowsSuperTtc({ destDir = null, force = false } = {}) {
+  if (process.platform !== 'win32') {
+    return { ok: true, skipped: true, reason: 'non-win32' };
+  }
+  const home = os.homedir();
+  const userFontsDir =
+    destDir || path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Microsoft', 'Windows', 'Fonts');
+  let userFontList = [];
+  try {
+    if (fs.existsSync(userFontsDir)) userFontList = fs.readdirSync(userFontsDir);
+  } catch {}
+  const hasUiSplit = userFontList.some((f) => /^Sarasa[-_ ]?Ui[-_ ]?SC[-_ ].*\.ttf$/i.test(f));
+  const hasMonoSplit = userFontList.some((f) => /^Sarasa[-_ ]?Mono[-_ ]?Slab[-_ ]?SC[-_ ].*\.ttf$/i.test(f));
+  if (!force && (!hasUiSplit || !hasMonoSplit)) {
+    return {
+      ok: false,
+      reason: 'split_sc_ttf_missing',
+      hint: 'Install SarasaUiSC-*.ttf and SarasaMonoSlabSC-*.ttf first (or pass --force) before retiring Sarasa-SuperTTC.ttc.'
+    };
+  }
+
+  const removedRegistryValues = [];
+  const candidateTtcPaths = new Set();
+  for (const f of userFontList) {
+    if (/^Sarasa[ _-]?SuperTTC[^\\\/]*\.ttc$/i.test(f)) {
+      candidateTtcPaths.add(path.join(userFontsDir, f));
+    }
+  }
+
+  let gdiRemovedCount = 0;
+  let broadcastOk = false;
+  try {
+    const seedTmp = path.join(os.tmpdir(), `ag-retire-ttc-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(seedTmp, JSON.stringify({ userFontsDir, initialPaths: Array.from(candidateTtcPaths) }), 'utf8');
+    try {
+      const psRetire = [
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+        '$ErrorActionPreference = "SilentlyContinue"',
+        'Add-Type -TypeDefinition @"',
+        'using System; using System.Runtime.InteropServices;',
+        'public static class AgFontRetire {',
+        '  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern bool RemoveFontResource(string lpFileName);',
+        '  [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern bool SendNotifyMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);',
+        '}',
+        '"@',
+        `$seed = Get-Content -LiteralPath '${seedTmp.replace(/'/g, "''")}' -Raw -Encoding UTF8 | ConvertFrom-Json`,
+        '$paths = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)',
+        'foreach ($p in @($seed.initialPaths)) { if ($p) { [void]$paths.Add([string]$p) } }',
+        '$removedNames = New-Object System.Collections.Generic.List[string]',
+        '$sk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts", $true)',
+        'if ($null -ne $sk) {',
+        '  try {',
+        '    foreach ($n in @($sk.GetValueNames())) {',
+        '      if (-not $n) { continue }',
+        '      $d = [string]$sk.GetValue($n)',
+        '      if (($n -match "Sarasa[ _-]?SuperTTC") -or ($d -match "Sarasa[ _-]?SuperTTC[^\\\\/]*\\.ttc$")) {',
+        '        if ($d -and ($d -match "\\.ttc$")) {',
+        '          $full = if ([System.IO.Path]::IsPathRooted($d)) { $d } else { Join-Path ([string]$seed.userFontsDir) $d }',
+        '          [void]$paths.Add($full)',
+        '        }',
+        '        $sk.DeleteValue($n, $false)',
+        '        if ($null -eq $sk.GetValue($n, $null)) { $removedNames.Add([string]$n) }',
+        '      }',
+        '    }',
+        '  } finally { $sk.Dispose() }',
+        '}',
+        '$rem = 0',
+        '$notified = $false',
+        'if ($paths.Count -gt 0 -or $removedNames.Count -gt 0) {',
+        '  foreach ($fp in $paths) { if ($fp) { for ($i = 0; $i -lt 4; $i++) { if ([AgFontRetire]::RemoveFontResource([string]$fp)) { $rem++ } else { break } } } }',
+        '  $notified = [bool][AgFontRetire]::SendNotifyMessage([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero)',
+        '}',
+        '[PSCustomObject]@{ removedNames = @($removedNames); candidatePaths = @($paths); gdiRemoved = $rem; notified = $notified } | ConvertTo-Json -Compress'
+      ].join('\n');
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', psRetire], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000
+      });
+      if (r.status === 0) {
+        const d = JSON.parse(String(r.stdout || '').trim() || '{}');
+        if (Array.isArray(d.removedNames)) removedRegistryValues.push(...d.removedNames);
+        if (Array.isArray(d.candidatePaths)) {
+          for (const cp of d.candidatePaths) {
+            if (cp) candidateTtcPaths.add(String(cp));
+          }
+        }
+        gdiRemovedCount = Number(d.gdiRemoved) || 0;
+        broadcastOk = Boolean(d.notified);
+      }
+    } finally {
+      try {
+        if (fs.existsSync(seedTmp)) fs.unlinkSync(seedTmp);
+      } catch {}
+    }
+  } catch {}
+
+  const deletedFiles = [];
+  const lockedPendingRebootFiles = [];
+  for (const fp of candidateTtcPaths) {
+    if (!fp.toLowerCase().startsWith(userFontsDir.toLowerCase())) continue;
+    if (!fs.existsSync(fp)) continue;
+    try {
+      fs.unlinkSync(fp);
+      deletedFiles.push(fp);
+    } catch {
+      lockedPendingRebootFiles.push(fp);
+    }
+  }
+
+  return {
+    ok: true,
+    removedRegistryValues,
+    gdiRemovedCount,
+    broadcastOk,
+    deletedFiles,
+    lockedPendingRebootFiles,
+    effectiveOnNextAntigravityLaunch: true
+  };
 }
 
 async function runUninstall() {
@@ -2498,8 +3692,12 @@ async function runUninstall() {
 
   if (isCustomSandboxTarget) {
     const localVbs = path.join(targetDir, 'AntigravityThemeDaemon.vbs');
+    const localCacheDir = path.join(targetDir, '.cache');
     try {
       if (fs.existsSync(localVbs)) fs.unlinkSync(localVbs);
+    } catch {}
+    try {
+      if (fs.existsSync(localCacheDir)) fs.rmSync(localCacheDir, { recursive: true, force: true });
     } catch {}
     console.log(`[Uninstall] Cleaned custom sandbox target (${targetDir}); global daemon and services were left untouched.`);
     return;
@@ -2553,6 +3751,10 @@ async function runUninstall() {
   }
   stopRunningDaemonProcesses();
   removeCdpLaunchers();
+  try {
+    const cacheDir = path.join(targetDir, '.cache');
+    if (fs.existsSync(cacheDir)) fs.rmSync(cacheDir, { recursive: true, force: true });
+  } catch {}
 
   // 2. 在无后台守护进程干扰的纯净状态下，向打开的窗口发送一次禁用还原载荷，即时卸载样式并恢复英文原貌
   if (fs.existsSync(userConfigPath) && fs.existsSync(realDaemon)) {
@@ -2594,8 +3796,14 @@ switch (subcommand) {
   case 'relaunch':
     await runRelaunch();
     break;
+  case 'download-fonts':
+    await runDownloadFontsCmd();
+    break;
   case 'install-fonts':
-    runInstallFonts();
+    await runInstallFonts();
+    break;
+  case 'retire-super-ttc':
+    console.log(JSON.stringify(retireWindowsSuperTtc({ force: hasFlag('--force') }), null, 2));
     break;
   case 'verify':
     await runVerify();
@@ -2608,11 +3816,14 @@ switch (subcommand) {
     break;
   default:
     console.log(`Usage:
-  node install.mjs install       [--channel auto|stable|insiders] [--preset high-contrast|claude-desktop-purewhite|vintage-deep] [--dark-preset onyx|claude-warm] [--sync-user] [--with-launcher]
-  node install.mjs relaunch      [--channel auto|stable|insiders] [--force]
-  node install.mjs install-fonts --from <font-folder-path>
-  node install.mjs doctor        [--channel auto|stable|insiders]
-  node install.mjs verify        [--safe-mode] [--channel auto|stable|insiders]
+  node install.mjs install          [--channel auto|stable|insiders] [--preset native|morandi|absolutely|claude-desktop-purewhite|vintage-deep] [--dark-preset onyx|claude-warm] [--sync-user] [--with-launcher]
+  node install.mjs relaunch         [--channel auto|stable|insiders] [--force]
+  node install.mjs download-fonts   [--dir <download-dir>] [--all] [--force] [--super-ttc]
+  node install.mjs install-fonts    --auto-download [--dir <download-dir>] [--force] [--super-ttc] [--retire-super-ttc]
+  node install.mjs install-fonts    --from <font-folder-or-zip-path> [--retire-super-ttc]
+  node install.mjs retire-super-ttc [--force]
+  node install.mjs doctor           [--channel auto|stable|insiders]
+  node install.mjs verify           [--safe-mode] [--channel auto|stable|insiders]
   node install.mjs rollback
   node install.mjs uninstall
   node install.mjs build-manifest
