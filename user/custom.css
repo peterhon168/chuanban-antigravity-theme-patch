@@ -443,3 +443,44 @@
   border: 1px solid rgba(192, 132, 252, 0.68);
   color: #e9d5ff;
 }
+
+#ag-watchdog-hud .ag-wd-policy-btn {
+  background: rgba(15, 23, 42, 0.9) !important;
+  border: 1px solid rgba(51, 65, 85, 0.85) !important;
+  color: #cbd5e1 !important;
+  cursor: pointer !important;
+  padding: 1px 7px !important;
+  border-radius: 6px !important;
+  font-size: 10.5px !important;
+  font-weight: 600 !important;
+  line-height: 1.5 !important;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease !important;
+}
+
+#ag-watchdog-hud .ag-wd-policy-btn:hover {
+  filter: brightness(1.12);
+}
+
+#ag-watchdog-hud .ag-wd-policy-btn:focus,
+#ag-watchdog-hud .ag-wd-policy-btn:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+#ag-watchdog-hud .ag-wd-policy-btn.is-pol-gemini {
+  background: rgba(6, 78, 59, 0.72) !important;
+  border-color: rgba(16, 185, 129, 0.6) !important;
+  color: #6ee7b7 !important;
+}
+
+#ag-watchdog-hud .ag-wd-policy-btn.is-pol-opus {
+  background: rgba(88, 28, 135, 0.78) !important;
+  border-color: rgba(192, 132, 252, 0.72) !important;
+  color: #e9d5ff !important;
+}
+
+#ag-watchdog-hud .ag-wd-policy-btn.is-pol-sonnet {
+  background: rgba(8, 51, 68, 0.85) !important;
+  border-color: rgba(34, 211, 238, 0.68) !important;
+  color: #67e8f9 !important;
+}

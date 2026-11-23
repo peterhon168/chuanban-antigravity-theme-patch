@@ -2698,12 +2698,13 @@
         </div>
 
         <div id="ag-wd-mode-row" style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding-top:5px;border-top:1px solid rgba(30,41,59,0.75);">
-          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
             <span style="font-size:10.5px;color:#94a3b8;">协同:</span>
             <div id="ag-wd-mode-seg" class="ag-wd-mode-seg" role="group" aria-label="三模型协作模式">
-              <button id="ag-wd-mode-a" type="button" data-collab-mode="A" class="ag-wd-mode-btn ag-wd-mono" title="模式 A：Gemini 日常省额总控 + Codex 后端/审查，封存 Claude 额度">A·省额</button>
-              <button id="ag-wd-mode-b" type="button" data-collab-mode="B" class="ag-wd-mode-btn ag-wd-mono" title="模式 B：Opus 视觉/架构二审 + Gemini 双盲/文案 + Codex 后端/审查（自动/手动兼顾）">B·Opus</button>
+              <button id="ag-wd-mode-a" type="button" data-collab-mode="A" class="ag-wd-mode-btn ag-wd-mono" title="模式 A：Gemini 日常省额总控 + Codex 后端/审查，自动切换 Gemini 策略">A·省额</button>
+              <button id="ag-wd-mode-b" type="button" data-collab-mode="B" class="ag-wd-mode-btn ag-wd-mono" title="模式 B：Opus 视觉/架构二审 + Gemini 双盲/文案 + Codex 后端/审查，自动切换 Opus v2 策略">B·Opus</button>
             </div>
+            <button id="ag-wd-policy-btn" type="button" class="ag-wd-policy-btn ag-wd-mono is-pol-gemini" title="当前 GEMINI.md 注入策略（点击可手动在 Gemini / Opus v2 / Sonnet v2 间轮换，亦随模型选择器与模式自动切换）">策略: Gemini</button>
           </div>
           <span id="ag-wd-mode-hint" class="ag-wd-mono" style="font-size:10.5px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">同步中…</span>
         </div>
@@ -2819,6 +2820,7 @@
   const elPillMode = document.getElementById('ag-wd-pill-mode');
   const elModeABtn = document.getElementById('ag-wd-mode-a');
   const elModeBBtn = document.getElementById('ag-wd-mode-b');
+  const elPolicyBtn = document.getElementById('ag-wd-policy-btn');
   const elModeHint = document.getElementById('ag-wd-mode-hint');
 
   let latestKickPrompt = '';
@@ -2970,6 +2972,9 @@
   }
 
   function renderSnapshot() {
+    try {
+      checkComposerModelAutoSwitch();
+    } catch {}
     // 彻底隐藏且未启用自愈时，完全跳过页面采样，仅按需保底挂载顶栏重开按钮
     if (cfg.hidden && !cfg.autoHeal) {
       ensureReopenToolbarBtn();
@@ -3423,15 +3428,44 @@
     renderSnapshot();
   });
 
-  // 三模型协作模式 (A·省额 / B·Opus) 状态同步与点击热切换
+  // 三模型协作模式 (A·省额 / B·Opus) 与 GEMINI.md 策略 (gemini / opus v2 / sonnet v2) 状态同步与热切换
+  const STORAGE_COLLAB_POLICY_KEY = 'ag_wd_collab_policy_v1';
+  const POLICY_CYCLE = ['gemini', 'opus', 'sonnet'];
+  const POLICY_LABELS = {
+    gemini: '策略: Gemini',
+    opus: '策略: Opus v2',
+    sonnet: '策略: Sonnet v2'
+  };
+
   let collabMode = 'A';
+  let collabPolicy = 'gemini';
   try {
     collabMode = localStorage.getItem(STORAGE_COLLAB_MODE_KEY) === 'B' ? 'B' : 'A';
+    const savedPol = localStorage.getItem(STORAGE_COLLAB_POLICY_KEY);
+    if (savedPol === 'gemini' || savedPol === 'opus' || savedPol === 'sonnet') {
+      collabPolicy = savedPol;
+    } else {
+      collabPolicy = collabMode === 'B' ? 'opus' : 'gemini';
+    }
   } catch {}
   let collabBridgeState = 'syncing';
   let lastCollabSyncTs = 0;
   let collabFetchCtrl = null;
   let collabSyncSeq = 0;
+  let lastComposerDetectedPol = '';
+
+  function detectComposerSelectedPolicy() {
+    const box = document.getElementById('antigravity.agentSidePanelInputBox');
+    if (!box) return '';
+    const btns = box.querySelectorAll('button, [role="combobox"], [data-testid*="model"]');
+    for (let i = 0; i < btns.length; i++) {
+      const txt = ((btns[i].textContent || '') + ' ' + (btns[i].getAttribute('aria-label') || '')).toLowerCase();
+      if (/claude\s*opus|opus\s*5\.5|opus\s*4\.6/i.test(txt)) return 'opus';
+      if (/claude\s*sonnet|sonnet\s*5\.5|sonnet\s*4\.6/i.test(txt)) return 'sonnet';
+      if (/gemini\s*[34]/i.test(txt)) return 'gemini';
+    }
+    return '';
+  }
 
   function applyCollabModeUI() {
     const isB = collabMode === 'B';
@@ -3443,30 +3477,56 @@
       elModeBBtn.classList.toggle('is-active-b', isB);
       elModeBBtn.setAttribute('aria-pressed', String(isB));
     }
+    if (elPolicyBtn) {
+      const pol = POLICY_LABELS[collabPolicy] ? collabPolicy : 'gemini';
+      const nextLabel = POLICY_LABELS[pol];
+      if (elPolicyBtn.textContent !== nextLabel) elPolicyBtn.textContent = nextLabel;
+      elPolicyBtn.classList.toggle('is-pol-gemini', pol === 'gemini');
+      elPolicyBtn.classList.toggle('is-pol-opus', pol === 'opus');
+      elPolicyBtn.classList.toggle('is-pol-sonnet', pol === 'sonnet');
+    }
     if (elPillMode) {
-      elPillMode.textContent = isB ? 'B' : 'A';
+      const polShort = collabPolicy === 'opus' ? 'Opus' : collabPolicy === 'sonnet' ? 'Sonnet' : 'Gem';
+      const pillLabel = `${isB ? 'B' : 'A'}·${polShort}`;
+      if (elPillMode.textContent !== pillLabel) elPillMode.textContent = pillLabel;
       elPillMode.classList.toggle('is-mode-a', !isB);
       elPillMode.classList.toggle('is-mode-b', isB);
-      elPillMode.title = isB ? '当前协作模式 B·Opus 全功率' : '当前协作模式 A·省额默认';
+      elPillMode.title = `当前模式 ${isB ? 'B·全功率' : 'A·省额'} | GEMINI.md 策略: ${POLICY_LABELS[collabPolicy] || collabPolicy}`;
     }
     if (elModeHint) {
       let nextTxt = '';
       let nextColor = '#64748b';
       if (collabBridgeState === 'offline') {
-        nextTxt = '桥接未连 (仅本地)';
+        nextTxt = '桥接未连';
         nextColor = '#f59e0b';
       } else if (collabBridgeState === 'syncing') {
         nextTxt = '同步中…';
         nextColor = '#64748b';
       } else if (isB) {
-        nextTxt = '全功率 · Opus+Codex';
+        nextTxt = '全功率·已同步';
         nextColor = '#c084fc';
       } else {
-        nextTxt = '省额 · 自动/手动兼顾';
+        nextTxt = '省额·已同步';
         nextColor = '#34d399';
       }
       if (elModeHint.textContent !== nextTxt) elModeHint.textContent = nextTxt;
       if (elModeHint.style.color !== nextColor) elModeHint.style.color = nextColor;
+    }
+  }
+
+  function updateLocalCollabState(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.mode === 'A' || data.mode === 'B') {
+      collabMode = data.mode;
+      try {
+        localStorage.setItem(STORAGE_COLLAB_MODE_KEY, collabMode);
+      } catch {}
+    }
+    if (data.policy === 'gemini' || data.policy === 'opus' || data.policy === 'sonnet') {
+      collabPolicy = data.policy;
+      try {
+        localStorage.setItem(STORAGE_COLLAB_POLICY_KEY, collabPolicy);
+      } catch {}
     }
   }
 
@@ -3499,12 +3559,7 @@
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (cleanedUp || seq !== collabSyncSeq) return;
-      if (data && (data.mode === 'A' || data.mode === 'B')) {
-        collabMode = data.mode;
-        try {
-          localStorage.setItem(STORAGE_COLLAB_MODE_KEY, collabMode);
-        } catch {}
-      }
+      updateLocalCollabState(data);
       collabBridgeState = 'online';
       applyCollabModeUI();
     } catch {
@@ -3519,9 +3574,21 @@
   async function switchCollabMode(nextMode) {
     if (cleanedUp) return;
     const targetMode = nextMode === 'B' ? 'B' : 'A';
+    const composerPol = detectComposerSelectedPolicy();
+    const targetPol =
+      targetMode === 'B'
+        ? composerPol === 'sonnet'
+          ? 'sonnet'
+          : 'opus'
+        : composerPol === 'opus' || composerPol === 'sonnet'
+          ? composerPol
+          : 'gemini';
+
     collabMode = targetMode;
+    collabPolicy = targetPol;
     try {
       localStorage.setItem(STORAGE_COLLAB_MODE_KEY, targetMode);
+      localStorage.setItem(STORAGE_COLLAB_POLICY_KEY, targetPol);
     } catch {}
     collabBridgeState = 'syncing';
     applyCollabModeUI();
@@ -3545,18 +3612,13 @@
       const res = await fetch(`${COLLAB_BRIDGE_URL}/mode`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: targetMode, source: 'hud' }),
+        body: JSON.stringify({ mode: targetMode, policy: targetPol, source: 'hud:mode' }),
         signal: collabFetchCtrl ? collabFetchCtrl.signal : undefined
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (cleanedUp || seq !== collabSyncSeq) return;
-      if (data && (data.mode === 'A' || data.mode === 'B')) {
-        collabMode = data.mode;
-        try {
-          localStorage.setItem(STORAGE_COLLAB_MODE_KEY, collabMode);
-        } catch {}
-      }
+      updateLocalCollabState(data);
       collabBridgeState = 'online';
       applyCollabModeUI();
     } catch {
@@ -3565,6 +3627,66 @@
       applyCollabModeUI();
     } finally {
       if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function switchCollabPolicy(nextPolicy, source = 'hud:policy-manual') {
+    if (cleanedUp) return;
+    const targetPol = POLICY_LABELS[nextPolicy] ? nextPolicy : 'gemini';
+    collabPolicy = targetPol;
+    try {
+      localStorage.setItem(STORAGE_COLLAB_POLICY_KEY, targetPol);
+    } catch {}
+    collabBridgeState = 'syncing';
+    applyCollabModeUI();
+
+    const seq = ++collabSyncSeq;
+    let timer = null;
+    try {
+      if (collabFetchCtrl) {
+        try {
+          collabFetchCtrl.abort();
+        } catch {}
+      }
+      collabFetchCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (collabFetchCtrl) {
+        timer = setTimeout(() => {
+          try {
+            collabFetchCtrl.abort();
+          } catch {}
+        }, 1500);
+      }
+      const res = await fetch(`${COLLAB_BRIDGE_URL}/policy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: targetPol, source }),
+        signal: collabFetchCtrl ? collabFetchCtrl.signal : undefined
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (cleanedUp || seq !== collabSyncSeq) return;
+      updateLocalCollabState(data);
+      collabBridgeState = 'online';
+      applyCollabModeUI();
+    } catch {
+      if (cleanedUp || seq !== collabSyncSeq) return;
+      collabBridgeState = 'offline';
+      applyCollabModeUI();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function checkComposerModelAutoSwitch() {
+    const detected = detectComposerSelectedPolicy();
+    if (!detected || detected === lastComposerDetectedPol) return;
+    lastComposerDetectedPol = detected;
+    if (detected === 'opus' && collabPolicy !== 'opus') {
+      switchCollabPolicy('opus', 'hud:composer-auto-opus');
+    } else if (detected === 'sonnet' && collabPolicy !== 'sonnet') {
+      switchCollabPolicy('sonnet', 'hud:composer-auto-sonnet');
+    } else if (detected === 'gemini' && collabMode === 'A' && collabPolicy !== 'gemini') {
+      switchCollabPolicy('gemini', 'hud:composer-auto-gemini');
     }
   }
 
@@ -3578,6 +3700,14 @@
     elModeBBtn.addEventListener('click', () => {
       switchCollabMode('B');
       elModeBBtn.blur();
+    });
+  }
+  if (elPolicyBtn) {
+    elPolicyBtn.addEventListener('click', () => {
+      const idx = POLICY_CYCLE.indexOf(collabPolicy);
+      const nextPol = POLICY_CYCLE[(idx + 1) % POLICY_CYCLE.length];
+      switchCollabPolicy(nextPol, 'hud:policy-cycle');
+      elPolicyBtn.blur();
     });
   }
   applyCollabModeUI();
