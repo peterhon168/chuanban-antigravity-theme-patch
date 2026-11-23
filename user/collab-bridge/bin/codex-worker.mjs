@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * 跨平台受限 Codex 派活与两级代码审查封装 (bin/codex-worker.mjs)
- * 支持 Windows / macOS / Linux，强制使用 workspace-write 沙箱。
+ * 支持 Windows / macOS / Linux，强制使用 workspace-write 沙箱；
+ * Windows 下自动强制覆盖 windows.sandbox=unelevated，避免在 Antigravity 嵌套终端沙箱中触发
+ * elevated helper 的 "setup refresh had errors" 导致所有子命令 exited -1。
  */
 
 import path from 'node:path';
@@ -9,11 +11,12 @@ import { spawnSync } from 'node:child_process';
 
 function printHelp() {
   console.log(`用法:
-  codex-worker --cd <工作目录> [--model <模型>] [--effort high|xhigh] [--resume <会话ID>] "<任务说明>"
-  codex-worker --review --cd <工作目录> [--base <分支>] [--model <模型>] [--effort high|xhigh] ["<补充审查要求>"]
+  codex-worker --cd <工作目录> [--model <模型>] [--effort low|medium|high|xhigh] [--resume <会话ID>] [--skip-git-repo-check] [--ephemeral] "<任务说明>"
+  codex-worker --review --cd <工作目录> [--base <分支>] [--model <模型>] [--effort low|medium|high|xhigh] ["<补充审查要求>"]
 
 说明:
   - 强制 -s workspace-write 沙箱，禁用越权免审批参数。
+  - Windows 自动追加 -c windows.sandbox=unelevated，规避嵌套沙箱下 setup refresh 失败。
   - 默认推理档位 high；涉及资金/权限/登录/对外发送时显式传 --effort xhigh。
   - --review 模式强制输出「阻塞级 (P0)」与「建议级 (P1)」两级审查清单。`);
 }
@@ -26,6 +29,8 @@ function parseArgs(argv) {
     effort: 'high',
     resume: '',
     base: '',
+    skipGitRepoCheck: false,
+    ephemeral: false,
     help: false,
     promptParts: []
   };
@@ -49,6 +54,10 @@ function parseArgs(argv) {
       opts.resume = argv[++i] || '';
     } else if (a === '--base') {
       opts.base = argv[++i] || '';
+    } else if (a === '--skip-git-repo-check') {
+      opts.skipGitRepoCheck = true;
+    } else if (a === '--ephemeral') {
+      opts.ephemeral = true;
     } else {
       opts.promptParts.push(a);
     }
@@ -69,12 +78,25 @@ if (!opts.review && !rawPrompt) {
   process.exit(2);
 }
 
+const isWin = process.platform === 'win32';
 const targetDir = path.resolve(opts.cd);
 let finalPrompt = '';
 const args = ['exec'];
 
+// 不使用双引号的裸字符串字面量，规避 Windows cmd.exe 引号剥离
+const commonConfigArgs = ['-c', `model_reasoning_effort=${opts.effort}`];
+if (isWin) {
+  commonConfigArgs.push('-c', 'windows.sandbox=unelevated');
+}
+if (opts.skipGitRepoCheck) {
+  commonConfigArgs.push('--skip-git-repo-check');
+}
+if (opts.ephemeral) {
+  commonConfigArgs.push('--ephemeral');
+}
+
 if (opts.review) {
-  args.push('review', '-c', `model_reasoning_effort="${opts.effort}"`);
+  args.push('review', ...commonConfigArgs);
   if (opts.model) args.push('-m', opts.model);
   if (opts.base) {
     args.push('--base', opts.base);
@@ -89,26 +111,12 @@ if (opts.review) {
   ].join('\n');
   args.push('-');
 } else if (opts.resume) {
-  args.push(
-    'resume',
-    opts.resume,
-    '-s',
-    'workspace-write',
-    '-c',
-    `model_reasoning_effort="${opts.effort}"`
-  );
+  args.push('resume', opts.resume, '-s', 'workspace-write', ...commonConfigArgs);
   if (opts.model) args.push('-m', opts.model);
   finalPrompt = rawPrompt;
   args.push('-');
 } else {
-  args.push(
-    '-C',
-    targetDir,
-    '-s',
-    'workspace-write',
-    '-c',
-    `model_reasoning_effort="${opts.effort}"`
-  );
+  args.push('-C', targetDir, '-s', 'workspace-write', ...commonConfigArgs);
   if (opts.model) args.push('-m', opts.model);
   finalPrompt = [
     '【受限工作区任务边界】',
@@ -121,7 +129,6 @@ if (opts.review) {
   args.push('-');
 }
 
-const isWin = process.platform === 'win32';
 const res = spawnSync(
   isWin ? 'cmd.exe' : 'codex',
   isWin ? ['/d', '/s', '/c', 'codex.cmd', ...args] : args,
