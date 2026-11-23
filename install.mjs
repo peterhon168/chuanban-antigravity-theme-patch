@@ -217,7 +217,7 @@ function buildDistZip(baseDir = __dirname) {
     'assets'
   ].filter((item) => fs.existsSync(path.join(baseDir, item)));
 
-  const allowedUserFiles = new Set(['config.json', 'custom.css', 'custom.js', 'i18n.override.json']);
+  const allowedUserFiles = new Set(['config.json', 'custom.css', 'custom.js', 'i18n.override.json', 'collab-bridge']);
   const skipNames = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
   const entriesToPack = [];
   const collectEntries = (relPosix) => {
@@ -2437,6 +2437,14 @@ async function runInstall() {
     spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', realDaemon, '--once'], {
       stdio: 'inherit'
     });
+
+    // 若仓库携带 user/collab-bridge/setup.mjs，则在非沙箱真实安装时自动部署三模型状态桥、三套策略模板与 Hooks
+    const collabSetupScript = path.join(srcUser, 'collab-bridge', 'setup.mjs');
+    if (fs.existsSync(collabSetupScript)) {
+      spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', collabSetupScript], {
+        stdio: 'inherit'
+      });
+    }
   }
 
   const postEnv = isCustomSandboxTarget ? env : await detectEnvironment(currentCfg.channel);
