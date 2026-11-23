@@ -86,6 +86,8 @@
   const STORAGE_POS_KEY = 'ag_wd_real_pos_v2';
   const STORAGE_CFG_KEY = 'ag_wd_real_cfg_v2';
   const STORAGE_SWARM_ORIGIN_KEY = 'ag_wd_swarm_origin_v1';
+  const STORAGE_COLLAB_MODE_KEY = 'ag_wd_collab_mode_v1';
+  const COLLAB_BRIDGE_URL = 'http://127.0.0.1:19876';
   const TIMEOUT_OPTIONS = [60, 120, 180, 300];
 
   function escHtml(str) {
@@ -2575,6 +2577,7 @@
   pill.innerHTML = `
     <span id="ag-wd-pill-dot" style="width:8px;height:8px;border-radius:50%;"></span>
     <span id="ag-wd-pill-txt" class="ag-wd-mono" style="color:#e2e8f0;">100% 完成了么</span>
+    <span id="ag-wd-pill-mode" class="ag-wd-pill-mode ag-wd-mono is-mode-a" title="当前协作模式">A</span>
     <span style="font-size:9px;opacity:0.65;margin-left:1px;">▾</span>
   `;
   pill.title = '点击展开「完成了么」真实会话监控面板';
@@ -2693,6 +2696,17 @@
           </div>
           <button id="ag-wd-wake-btn" class="ag-wd-chip-btn" title="若当前对话断流或卡住，立即自动点重试或发送「继续」">⚡ 唤醒继续</button>
         </div>
+
+        <div id="ag-wd-mode-row" style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding-top:5px;border-top:1px solid rgba(30,41,59,0.75);">
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <span style="font-size:10.5px;color:#94a3b8;">协同:</span>
+            <div id="ag-wd-mode-seg" class="ag-wd-mode-seg" role="group" aria-label="三模型协作模式">
+              <button id="ag-wd-mode-a" type="button" data-collab-mode="A" class="ag-wd-mode-btn ag-wd-mono" title="模式 A：Gemini 日常省额总控 + Codex 后端/审查，封存 Claude 额度">A·省额</button>
+              <button id="ag-wd-mode-b" type="button" data-collab-mode="B" class="ag-wd-mode-btn ag-wd-mono" title="模式 B：Opus 视觉/架构二审 + Gemini 双盲/文案 + Codex 后端/审查（自动/手动兼顾）">B·Opus</button>
+            </div>
+          </div>
+          <span id="ag-wd-mode-hint" class="ag-wd-mono" style="font-size:10.5px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">同步中…</span>
+        </div>
       </div>
     </div>
   `;
@@ -2802,6 +2816,10 @@
   const elWakeBtn = document.getElementById('ag-wd-wake-btn');
   const elPillDot = document.getElementById('ag-wd-pill-dot');
   const elPillTxt = document.getElementById('ag-wd-pill-txt');
+  const elPillMode = document.getElementById('ag-wd-pill-mode');
+  const elModeABtn = document.getElementById('ag-wd-mode-a');
+  const elModeBBtn = document.getElementById('ag-wd-mode-b');
+  const elModeHint = document.getElementById('ag-wd-mode-hint');
 
   let latestKickPrompt = '';
   let lastSnap = null;
@@ -3405,6 +3423,165 @@
     renderSnapshot();
   });
 
+  // 三模型协作模式 (A·省额 / B·Opus) 状态同步与点击热切换
+  let collabMode = 'A';
+  try {
+    collabMode = localStorage.getItem(STORAGE_COLLAB_MODE_KEY) === 'B' ? 'B' : 'A';
+  } catch {}
+  let collabBridgeState = 'syncing';
+  let lastCollabSyncTs = 0;
+  let collabFetchCtrl = null;
+  let collabSyncSeq = 0;
+
+  function applyCollabModeUI() {
+    const isB = collabMode === 'B';
+    if (elModeABtn) {
+      elModeABtn.classList.toggle('is-active-a', !isB);
+      elModeABtn.setAttribute('aria-pressed', String(!isB));
+    }
+    if (elModeBBtn) {
+      elModeBBtn.classList.toggle('is-active-b', isB);
+      elModeBBtn.setAttribute('aria-pressed', String(isB));
+    }
+    if (elPillMode) {
+      elPillMode.textContent = isB ? 'B' : 'A';
+      elPillMode.classList.toggle('is-mode-a', !isB);
+      elPillMode.classList.toggle('is-mode-b', isB);
+      elPillMode.title = isB ? '当前协作模式 B·Opus 全功率' : '当前协作模式 A·省额默认';
+    }
+    if (elModeHint) {
+      let nextTxt = '';
+      let nextColor = '#64748b';
+      if (collabBridgeState === 'offline') {
+        nextTxt = '桥接未连 (仅本地)';
+        nextColor = '#f59e0b';
+      } else if (collabBridgeState === 'syncing') {
+        nextTxt = '同步中…';
+        nextColor = '#64748b';
+      } else if (isB) {
+        nextTxt = '全功率 · Opus+Codex';
+        nextColor = '#c084fc';
+      } else {
+        nextTxt = '省额 · 自动/手动兼顾';
+        nextColor = '#34d399';
+      }
+      if (elModeHint.textContent !== nextTxt) elModeHint.textContent = nextTxt;
+      if (elModeHint.style.color !== nextColor) elModeHint.style.color = nextColor;
+    }
+  }
+
+  async function syncCollabModeFromBridge(force = false) {
+    if (cleanedUp) return;
+    const now = Date.now();
+    if (!force && now - lastCollabSyncTs < 2000) return;
+    lastCollabSyncTs = now;
+    const seq = ++collabSyncSeq;
+    let timer = null;
+    try {
+      if (collabFetchCtrl) {
+        try {
+          collabFetchCtrl.abort();
+        } catch {}
+      }
+      collabFetchCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (collabFetchCtrl) {
+        timer = setTimeout(() => {
+          try {
+            collabFetchCtrl.abort();
+          } catch {}
+        }, 1500);
+      }
+      const res = await fetch(`${COLLAB_BRIDGE_URL}/mode`, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: collabFetchCtrl ? collabFetchCtrl.signal : undefined
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (cleanedUp || seq !== collabSyncSeq) return;
+      if (data && (data.mode === 'A' || data.mode === 'B')) {
+        collabMode = data.mode;
+        try {
+          localStorage.setItem(STORAGE_COLLAB_MODE_KEY, collabMode);
+        } catch {}
+      }
+      collabBridgeState = 'online';
+      applyCollabModeUI();
+    } catch {
+      if (cleanedUp || seq !== collabSyncSeq) return;
+      collabBridgeState = 'offline';
+      applyCollabModeUI();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function switchCollabMode(nextMode) {
+    if (cleanedUp) return;
+    const targetMode = nextMode === 'B' ? 'B' : 'A';
+    collabMode = targetMode;
+    try {
+      localStorage.setItem(STORAGE_COLLAB_MODE_KEY, targetMode);
+    } catch {}
+    collabBridgeState = 'syncing';
+    applyCollabModeUI();
+
+    const seq = ++collabSyncSeq;
+    let timer = null;
+    try {
+      if (collabFetchCtrl) {
+        try {
+          collabFetchCtrl.abort();
+        } catch {}
+      }
+      collabFetchCtrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (collabFetchCtrl) {
+        timer = setTimeout(() => {
+          try {
+            collabFetchCtrl.abort();
+          } catch {}
+        }, 1500);
+      }
+      const res = await fetch(`${COLLAB_BRIDGE_URL}/mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: targetMode, source: 'hud' }),
+        signal: collabFetchCtrl ? collabFetchCtrl.signal : undefined
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (cleanedUp || seq !== collabSyncSeq) return;
+      if (data && (data.mode === 'A' || data.mode === 'B')) {
+        collabMode = data.mode;
+        try {
+          localStorage.setItem(STORAGE_COLLAB_MODE_KEY, collabMode);
+        } catch {}
+      }
+      collabBridgeState = 'online';
+      applyCollabModeUI();
+    } catch {
+      if (cleanedUp || seq !== collabSyncSeq) return;
+      collabBridgeState = 'offline';
+      applyCollabModeUI();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  if (elModeABtn) {
+    elModeABtn.addEventListener('click', () => {
+      switchCollabMode('A');
+      elModeABtn.blur();
+    });
+  }
+  if (elModeBBtn) {
+    elModeBBtn.addEventListener('click', () => {
+      switchCollabMode('B');
+      elModeBBtn.blur();
+    });
+  }
+  applyCollabModeUI();
+
   if (elSwarmBtn) {
     elSwarmBtn.addEventListener('click', () => {
       openSwarmBoardUI();
@@ -3692,19 +3869,32 @@
     flushPendingPersist();
   };
 
+  const onWindowFocus = () => {
+    if (cleanedUp || document.hidden) return;
+    syncCollabModeFromBridge(false);
+  };
+
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('popstate', onPopState);
   window.addEventListener('pagehide', onPageUnload);
   window.addEventListener('beforeunload', onPageUnload);
+  window.addEventListener('focus', onWindowFocus);
 
   renderSnapshot();
   scheduleNextTick();
+  syncCollabModeFromBridge(true);
 
   // 注册幂等清理函数与外部生命周期钩子
   window.__ag_watchdog_cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
     flushPendingPersist();
+    if (collabFetchCtrl) {
+      try {
+        collabFetchCtrl.abort();
+      } catch {}
+      collabFetchCtrl = null;
+    }
     if (tickTimer) {
       clearTimeout(tickTimer);
       tickTimer = null;
@@ -3735,6 +3925,7 @@
     window.removeEventListener('popstate', onPopState);
     window.removeEventListener('pagehide', onPageUnload);
     window.removeEventListener('beforeunload', onPageUnload);
+    window.removeEventListener('focus', onWindowFocus);
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
     window.removeEventListener('resize', onWindowResize);
