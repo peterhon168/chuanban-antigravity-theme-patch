@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * 跨平台只读顾问调用封装 (bin/agy-ask.mjs)
- * 支持 Windows / macOS / Linux，调用本机 agy -p --output-format json。
+ * 支持 Windows / macOS / Linux，调用本机 agy -p --output-format json；
+ * 支持 -f / --prompt-file <文件> 与 --stdin / - 读取完整多行输入，防 .cmd 换行截断。
  */
 
 import fs from 'node:fs';
@@ -11,12 +12,14 @@ import { spawnSync } from 'node:child_process';
 
 function printHelp() {
   console.log(`用法:
-  agy-ask [--dir <目录>] [--model <模型ID>] [--copy] "<原始需求或待润色内容>"
+  agy-ask [--dir <目录>] [--model <模型ID>] [--copy] [--prompt-file <文件>] [--stdin] ["<原始需求或待润色内容>"]
 
 选项:
-  --dir <目录>      指定参考工作目录（默认当前目录）
-  --model <模型ID>  指定调用模型（默认 gemini-4-neon-high）
-  --copy            切换为界面文案与交互顾问模板`);
+  --dir <目录>            指定参考工作目录（默认当前目录）
+  --model <模型ID>        指定调用模型（默认 gemini-4-neon-high）
+  --copy                  切换为界面文案与交互顾问模板
+  -f, --prompt-file <文件> 从 UTF-8 文件读取完整多行内容（Windows 长文本推荐）
+  --stdin 或 -            从标准输入读取完整多行内容`);
 }
 
 function resolveAgyExe() {
@@ -42,6 +45,8 @@ function parseArgs(argv) {
     dir: process.cwd(),
     model: 'gemini-4-neon-high',
     copy: false,
+    promptFile: '',
+    useStdin: false,
     help: false,
     parts: []
   };
@@ -55,6 +60,10 @@ function parseArgs(argv) {
       opts.model = argv[++i] || opts.model;
     } else if (a === '--copy') {
       opts.copy = true;
+    } else if (a === '--prompt-file' || a === '-f') {
+      opts.promptFile = argv[++i] || '';
+    } else if (a === '--stdin' || a === '-') {
+      opts.useStdin = true;
     } else {
       opts.parts.push(a);
     }
@@ -68,9 +77,28 @@ if (opts.help) {
   process.exit(0);
 }
 
-const userText = opts.parts.join(' ').trim();
+const sections = [];
+if (opts.promptFile) {
+  const pfPath = path.resolve(opts.promptFile);
+  if (!fs.existsSync(pfPath)) {
+    console.error(`错误: 找不到提示词文件: ${pfPath}`);
+    process.exit(2);
+  }
+  const fileText = fs.readFileSync(pfPath, 'utf8').replace(/^\uFEFF/, '').trim();
+  if (fileText) sections.push(fileText);
+}
+if (opts.useStdin) {
+  try {
+    const stdinText = fs.readFileSync(0, 'utf8').replace(/^\uFEFF/, '').trim();
+    if (stdinText) sections.push(stdinText);
+  } catch {}
+}
+const cliText = opts.parts.join(' ').trim();
+if (cliText) sections.push(cliText);
+
+const userText = sections.join('\n\n').trim();
 if (!userText) {
-  console.error('错误: 请提供问题、原始需求或待润色文案。');
+  console.error('错误: 请提供问题、原始需求或待润色文案（命令行参数、--prompt-file 或 --stdin）。');
   printHelp();
   process.exit(2);
 }

@@ -1,22 +1,27 @@
 #!/usr/bin/env node
 /**
  * 跨平台受限 Codex 派活与两级代码审查封装 (bin/codex-worker.mjs)
- * 支持 Windows / macOS / Linux，强制使用 workspace-write 沙箱；
- * Windows 下自动强制覆盖 windows.sandbox=unelevated，避免在 Antigravity 嵌套终端沙箱中触发
- * elevated helper 的 "setup refresh had errors" 导致所有子命令 exited -1。
+ * 支持 Windows / macOS / Linux：
+ *   - 支持 -f / --prompt-file <文件> 与 --stdin / - 读取完整多行任务书，免疫 Windows .cmd 换行截断；
+ *   - Windows 普通写代码派活默认采用 -s danger-full-access（规避 Codex 内部 Restricted Token 导致目标工作区 Access is denied），
+ *     --review 审查模式保持只读并用 -c windows.sandbox=unelevated；macOS/Linux 默认 -s workspace-write；
+ *   - 可显式传入 --sandbox <read-only|workspace-write|danger-full-access> 覆盖。
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 function printHelp() {
   console.log(`用法:
-  codex-worker --cd <工作目录> [--model <模型>] [--effort low|medium|high|xhigh] [--resume <会话ID>] [--skip-git-repo-check] [--ephemeral] "<任务说明>"
-  codex-worker --review --cd <工作目录> [--base <分支>] [--model <模型>] [--effort low|medium|high|xhigh] ["<补充审查要求>"]
+  codex-worker --cd <工作目录> [--prompt-file <任务文件>] [--stdin] [--model <模型>] [--effort low|medium|high|xhigh] [--sandbox <模式>] [--resume <会话ID>] [--skip-git-repo-check] [--ephemeral] ["<任务说明>"]
+  codex-worker --review --cd <工作目录> [--prompt-file <要求文件>] [--base <分支>] [--model <模型>] [--effort low|medium|high|xhigh] ["<补充审查要求>"]
 
 说明:
-  - 强制 -s workspace-write 沙箱，禁用越权免审批参数。
-  - Windows 自动追加 -c windows.sandbox=unelevated，规避嵌套沙箱下 setup refresh 失败。
+  - -f, --prompt-file <文件> : 从 UTF-8 文件读取完整多行任务（Windows 长任务强烈推荐，防 .cmd 换行截断）。
+  - --stdin 或位置参数 -     : 从标准输入读取完整多行任务。
+  - --sandbox <模式>         : 覆盖沙箱模式 (read-only | workspace-write | danger-full-access)。
+                               Windows 写任务默认 danger-full-access，macOS/Linux 默认 workspace-write。
   - 默认推理档位 high；涉及资金/权限/登录/对外发送时显式传 --effort xhigh。
   - --review 模式强制输出「阻塞级 (P0)」与「建议级 (P1)」两级审查清单。`);
 }
@@ -27,8 +32,11 @@ function parseArgs(argv) {
     cd: process.cwd(),
     model: '',
     effort: 'high',
+    sandbox: '',
     resume: '',
     base: '',
+    promptFile: '',
+    useStdin: false,
     skipGitRepoCheck: false,
     ephemeral: false,
     help: false,
@@ -50,10 +58,19 @@ function parseArgs(argv) {
       if (e === 'low' || e === 'medium' || e === 'high' || e === 'xhigh') {
         opts.effort = e;
       }
+    } else if (a === '--sandbox' || a === '-s') {
+      const s = (argv[++i] || '').toLowerCase();
+      if (s === 'read-only' || s === 'workspace-write' || s === 'danger-full-access') {
+        opts.sandbox = s;
+      }
     } else if (a === '--resume') {
       opts.resume = argv[++i] || '';
     } else if (a === '--base') {
       opts.base = argv[++i] || '';
+    } else if (a === '--prompt-file' || a === '-f') {
+      opts.promptFile = argv[++i] || '';
+    } else if (a === '--stdin' || a === '-') {
+      opts.useStdin = true;
     } else if (a === '--skip-git-repo-check') {
       opts.skipGitRepoCheck = true;
     } else if (a === '--ephemeral') {
@@ -71,21 +88,44 @@ if (opts.help) {
   process.exit(0);
 }
 
-const rawPrompt = opts.promptParts.join(' ').trim();
+const promptSections = [];
+if (opts.promptFile) {
+  const pfPath = path.resolve(opts.promptFile);
+  if (!fs.existsSync(pfPath)) {
+    console.error(`错误: 找不到任务文件: ${pfPath}`);
+    process.exit(2);
+  }
+  const fileText = fs.readFileSync(pfPath, 'utf8').replace(/^\uFEFF/, '').trim();
+  if (fileText) promptSections.push(fileText);
+}
+if (opts.useStdin) {
+  try {
+    const stdinText = fs.readFileSync(0, 'utf8').replace(/^\uFEFF/, '').trim();
+    if (stdinText) promptSections.push(stdinText);
+  } catch {}
+}
+const cliText = opts.promptParts.join(' ').trim();
+if (cliText) {
+  promptSections.push(cliText);
+}
+
+const rawPrompt = promptSections.join('\n\n').trim();
 if (!opts.review && !rawPrompt) {
-  console.error('错误: 请提供任务说明，或使用 --review 启动代码审查。');
+  console.error('错误: 请提供任务说明（命令行参数、--prompt-file 或 --stdin），或使用 --review 启动代码审查。');
   printHelp();
   process.exit(2);
 }
 
 const isWin = process.platform === 'win32';
 const targetDir = path.resolve(opts.cd);
+const effectiveSandbox = opts.sandbox || (isWin ? 'danger-full-access' : 'workspace-write');
+
 let finalPrompt = '';
 const args = ['exec'];
 
 // 不使用双引号的裸字符串字面量，规避 Windows cmd.exe 引号剥离
 const commonConfigArgs = ['-c', `model_reasoning_effort=${opts.effort}`];
-if (isWin) {
+if (isWin && (opts.review || effectiveSandbox !== 'danger-full-access')) {
   commonConfigArgs.push('-c', 'windows.sandbox=unelevated');
 }
 if (opts.skipGitRepoCheck) {
@@ -111,16 +151,16 @@ if (opts.review) {
   ].join('\n');
   args.push('-');
 } else if (opts.resume) {
-  args.push('resume', opts.resume, '-s', 'workspace-write', ...commonConfigArgs);
+  args.push('resume', opts.resume, '-s', effectiveSandbox, ...commonConfigArgs);
   if (opts.model) args.push('-m', opts.model);
   finalPrompt = rawPrompt;
   args.push('-');
 } else {
-  args.push('-C', targetDir, '-s', 'workspace-write', ...commonConfigArgs);
+  args.push('-C', targetDir, '-s', effectiveSandbox, ...commonConfigArgs);
   if (opts.model) args.push('-m', opts.model);
   finalPrompt = [
     '【受限工作区任务边界】',
-    '- 仅在当前指定目录内完成任务，严格遵守给定接口与验收标准。',
+    `- 仅在当前指定目录 (${targetDir}) 内完成任务，严格遵守给定接口与验收标准。`,
     '- 禁止私自安装/升级全局依赖，禁止执行 git push 或对外发布操作，禁止读取无关凭据。',
     '- 完成后清晰汇报：修改文件清单、核心变更摘要、本地验证命令及实测结果。',
     '',
