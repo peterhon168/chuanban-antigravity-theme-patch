@@ -4,8 +4,8 @@
  * 支持 Windows / macOS / Linux：
  *   - 支持 -f / --prompt-file <文件> 与 --stdin / - 读取完整多行任务书，免疫 Windows .cmd 换行截断；
  *   - Windows 普通写代码派活默认采用 -s danger-full-access（规避 Codex 内部 Restricted Token 导致目标工作区 Access is denied），
- *     --review 审查模式保持只读并用 -c windows.sandbox=unelevated；macOS/Linux 默认 -s workspace-write；
- *   - 可显式传入 --sandbox <read-only|workspace-write|danger-full-access> 覆盖。
+ *     --review 审查模式走 codex exec -C <dir> -s read-only（避免与 codex exec review --uncommitted/--base 冲突，同时物理只读）；
+ *   - --resume 模式使用 -c sandbox_mode=<mode>（因 codex exec resume 不接受 -s 参数）。
  */
 
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 
 function printHelp() {
   console.log(`用法:
-  codex-worker --cd <工作目录> [--prompt-file <任务文件>] [--stdin] [--model <模型>] [--effort low|medium|high|xhigh] [--sandbox <模式>] [--resume <会话ID>] [--skip-git-repo-check] [--ephemeral] ["<任务说明>"]
+  codex-worker --cd <工作目录> [--prompt-file <任务文件>] [--stdin] [--model <模型>] [--effort low|medium|high|xhigh] [--sandbox <模式>] [--resume <会话ID|last>] [--skip-git-repo-check] [--ephemeral] ["<任务说明>"]
   codex-worker --review --cd <工作目录> [--prompt-file <要求文件>] [--base <分支>] [--model <模型>] [--effort low|medium|high|xhigh] ["<补充审查要求>"]
 
 说明:
@@ -22,8 +22,9 @@ function printHelp() {
   - --stdin 或位置参数 -     : 从标准输入读取完整多行任务。
   - --sandbox <模式>         : 覆盖沙箱模式 (read-only | workspace-write | danger-full-access)。
                                Windows 写任务默认 danger-full-access，macOS/Linux 默认 workspace-write。
+  - --resume <会话ID|last>   : 恢复指定会话（传 last 等效于 --last 续聊最近会话）。
   - 默认推理档位 high；涉及资金/权限/登录/对外发送时显式传 --effort xhigh。
-  - --review 模式强制输出「阻塞级 (P0)」与「建议级 (P1)」两级审查清单。`);
+  - --review 模式强制物理只读并输出「阻塞级 (P0)」与「建议级 (P1)」两级审查清单。`);
 }
 
 function parseArgs(argv) {
@@ -125,9 +126,6 @@ const args = ['exec'];
 
 // 不使用双引号的裸字符串字面量，规避 Windows cmd.exe 引号剥离
 const commonConfigArgs = ['-c', `model_reasoning_effort=${opts.effort}`];
-if (isWin && (opts.review || effectiveSandbox !== 'danger-full-access')) {
-  commonConfigArgs.push('-c', 'windows.sandbox=unelevated');
-}
 if (opts.skipGitRepoCheck) {
   commonConfigArgs.push('--skip-git-repo-check');
 }
@@ -136,27 +134,50 @@ if (opts.ephemeral) {
 }
 
 if (opts.review) {
-  args.push('review', ...commonConfigArgs);
-  if (opts.model) args.push('-m', opts.model);
-  if (opts.base) {
-    args.push('--base', opts.base);
-  } else {
-    args.push('--uncommitted');
+  // codex exec review 不允许同时传 --uncommitted/--base 与自定义 prompt(-)，
+  // 故改走只读 exec -s read-only 并在任务中显式限定 git 审查范围。
+  const reviewCfg = [...commonConfigArgs];
+  if (isWin) {
+    reviewCfg.push('-c', 'windows.sandbox=unelevated');
   }
+  args.push('-C', targetDir, '-s', 'read-only', ...reviewCfg);
+  if (opts.model) args.push('-m', opts.model);
+
+  const scopeLine = opts.base
+    ? `- 审查范围：请运行 \`git diff ${opts.base}...HEAD\` 与 \`git status --short\`，重点审查相对分支 \`${opts.base}\` 的全部改动及工作区未提交变更。`
+    : '- 审查范围：请运行 `git status --short`、`git diff` 与 `git diff --cached`（以及新增未跟踪文件），全面审查当前工作区所有未提交改动。';
+
   finalPrompt = [
-    '请按以下两级标准输出简体中文代码审查结论（禁止修改文件、禁止 git push）：',
+    '【只读两级代码审查任务】',
+    scopeLine,
+    '- 严禁修改任何文件、严禁写临时文件或执行 git push。',
+    '- 请严格按以下两级标准输出简体中文代码审查结论：',
     '【阻塞级】仅限：算错钱/数据损坏丢失/越权鉴权漏洞/对外误发消息/导致上线或构建必挂的问题，且必须写明具体触发路径与文件行号；无则写「无」。',
     '【建议级】其余边界优化、代码风格或极低概率隐患，简明列出供参考但不阻塞合并。',
     rawPrompt ? `\n补充审查要求：\n${rawPrompt}` : ''
   ].join('\n');
   args.push('-');
 } else if (opts.resume) {
-  args.push('resume', opts.resume, '-s', effectiveSandbox, ...commonConfigArgs);
+  // codex exec resume 不接受 -s / -C 标志，沙箱通过 -c sandbox_mode=... 传递，工作目录由 spawnSync cwd 指定
+  const resumeCfg = [...commonConfigArgs, '-c', `sandbox_mode=${effectiveSandbox}`];
+  if (isWin && effectiveSandbox !== 'danger-full-access') {
+    resumeCfg.push('-c', 'windows.sandbox=unelevated');
+  }
+  args.push('resume', ...resumeCfg);
   if (opts.model) args.push('-m', opts.model);
+  if (opts.resume.toLowerCase() === 'last') {
+    args.push('--last');
+  } else {
+    args.push(opts.resume);
+  }
   finalPrompt = rawPrompt;
   args.push('-');
 } else {
-  args.push('-C', targetDir, '-s', effectiveSandbox, ...commonConfigArgs);
+  const execCfg = [...commonConfigArgs];
+  if (isWin && effectiveSandbox !== 'danger-full-access') {
+    execCfg.push('-c', 'windows.sandbox=unelevated');
+  }
+  args.push('-C', targetDir, '-s', effectiveSandbox, ...execCfg);
   if (opts.model) args.push('-m', opts.model);
   finalPrompt = [
     '【受限工作区任务边界】',
